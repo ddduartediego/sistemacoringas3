@@ -1,6 +1,5 @@
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-import { cookies } from 'next/headers';
 import { NextRequest, NextResponse } from 'next/server';
+import { createRouteHandlerSupabase } from '@/lib/supabase-route-handler';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,65 +12,42 @@ export async function POST(request: NextRequest) {
   console.log('[API] Iniciando processo de aprovação de usuário');
   
   try {
-    // Extrair o ID do usuário e do membro da requisição
+    // Obter dados do corpo da requisição
     const body = await request.json();
-    const { user_id, member_id } = body;
+    const { memberId } = body;
     
-    if (!user_id || !member_id) {
-      console.error('[API] Parâmetros inválidos:', { user_id, member_id });
-      return NextResponse.json(
-        { error: 'IDs de usuário e membro são obrigatórios' },
-        { status: 400 }
-      );
+    if (!memberId) {
+      return NextResponse.json({ error: 'ID do membro não fornecido' }, { status: 400 });
     }
     
-    console.log('[API] Dados recebidos para aprovação:', { user_id, member_id });
+    // Criar cliente Supabase de forma assíncrona
+    const supabase = await createRouteHandlerSupabase();
     
-    // Criar cliente Supabase
-    const cookieStore = cookies();
-    const supabase = createRouteHandlerClient({ cookies: () => cookieStore });
+    // Verificar se o usuário está autenticado
+    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
     
-    // Verificar autenticação
-    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-    if (sessionError || !sessionData.session) {
-      console.error('[API] Erro de autenticação:', sessionError);
-      return NextResponse.json(
-        { error: 'Usuário não autenticado' },
-        { status: 401 }
-      );
+    if (sessionError || !session) {
+      console.error('[API] Erro de sessão ou usuário não autenticado:', sessionError);
+      return NextResponse.json({ error: 'Não autorizado' }, { status: 401 });
     }
     
-    const adminId = sessionData.session.user.id;
-    console.log('[API] Admin ID:', adminId);
-    
-    // Verificar se o usuário autenticado é admin
-    const { data: adminData, error: adminError } = await supabase
+    // Verificar se o usuário é um administrador
+    const { data: userData, error: userError } = await supabase
       .from('members')
       .select('type')
-      .eq('user_id', adminId)
+      .eq('user_id', session.user.id)
       .single();
-      
-    if (adminError || !adminData) {
-      console.error('[API] Erro ao verificar permissões de admin:', adminError);
-      return NextResponse.json(
-        { error: 'Erro ao verificar permissões' },
-        { status: 500 }
-      );
-    }
     
-    if (!equalsIgnoreCase(adminData.type, 'admin')) {
-      console.error('[API] Usuário não é admin:', adminData);
-      return NextResponse.json(
-        { error: 'Acesso não autorizado' },
-        { status: 403 }
-      );
+    if (userError || !userData || userData.type !== 'admin') {
+      console.error('[API] Erro ao verificar tipo de usuário ou não é admin:', userError);
+      return NextResponse.json({ error: 'Acesso não autorizado' }, { status: 403 });
     }
     
     // Verificar se o membro existe e se está inativo
     const { data: memberData, error: memberError } = await supabase
       .from('members')
       .select('*')
-      .eq('id', member_id)
+      .eq('id', memberId)
       .single();
       
     if (memberError || !memberData) {
@@ -90,34 +66,24 @@ export async function POST(request: NextRequest) {
       );
     }
     
-    // Atualizar tipo do membro para 'member'
-    const { data: updateData, error: updateError } = await supabase
+    // Atualizar o tipo do membro para 'member'
+    const { data: updatedMember, error: updateError } = await supabase
       .from('members')
       .update({ type: 'member' })
-      .eq('id', member_id)
+      .eq('id', memberId)
       .select()
       .single();
-      
+    
     if (updateError) {
-      console.error('[API] Erro ao atualizar membro:', updateError);
-      return NextResponse.json(
-        { error: 'Erro ao aprovar usuário' },
-        { status: 500 }
-      );
+      console.error('[API] Erro ao aprovar usuário:', updateError);
+      return NextResponse.json({ error: 'Erro ao aprovar usuário' }, { status: 500 });
     }
     
-    console.log('[API] Membro aprovado com sucesso:', updateData);
+    console.log('[API] Membro aprovado com sucesso:', updatedMember);
     
-    return NextResponse.json({ 
-      success: true, 
-      message: 'Usuário aprovado com sucesso',
-      member: updateData
-    });
+    return NextResponse.json(updatedMember);
   } catch (error: any) {
-    console.error('[API] Erro inesperado ao aprovar usuário:', error);
-    return NextResponse.json(
-      { error: error.message || 'Erro desconhecido' },
-      { status: 500 }
-    );
+    console.error('[API] Erro não tratado:', error);
+    return NextResponse.json({ error: 'Erro interno do servidor' }, { status: 500 });
   }
 } 

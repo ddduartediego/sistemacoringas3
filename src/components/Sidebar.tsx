@@ -75,19 +75,22 @@ export default function Sidebar() {
     checkUserStatus();
   }, [user]);
   
-  // Buscar contagem de usuários pendentes usando nossa API
+  // Buscar contagem de usuários pendentes diretamente do Supabase
   const fetchPendingUsersCount = async () => {
     try {
-      // Usar a API Route em vez da chamada direta à API Admin
-      const response = await fetch('/api/pending-users');
+      const supabase = createClientComponentClient();
       
-      if (!response.ok) {
-        console.error('Erro ao buscar usuários pendentes:', await response.text());
-        return;
+      // Consultar diretamente o Supabase em vez de usar a API
+      const { count, error } = await supabase
+        .from('members')
+        .select('*', { count: 'exact', head: true })
+        .eq('type', 'pending');
+      
+      if (error) {
+        throw error;
       }
       
-      const data = await response.json();
-      setPendingUsersCount(data.users?.length || 0);
+      setPendingUsersCount(count || 0);
     } catch (err) {
       console.error('Erro ao buscar contagem de usuários pendentes:', err);
       setPendingUsersCount(0);

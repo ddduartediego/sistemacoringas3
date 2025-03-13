@@ -1,6 +1,5 @@
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-import { cookies } from 'next/headers';
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
+import { createRouteHandlerSupabase } from '@/lib/supabase-route-handler';
 
 export const dynamic = 'force-dynamic';
 
@@ -33,150 +32,46 @@ const MOCK_RESPONSE = {
   users: []
 };
 
-export async function GET(request: NextRequest) {
-  console.log('[API] Iniciando busca de usuários pendentes');
-  
-  // Usar uma única instância de cookies para todas as operações
-  let cookieStore;
-  
+export async function GET() {
   try {
-    cookieStore = cookies();
-  } catch (e) {
-    console.error('[API] Erro ao acessar cookies:', e);
-    return NextResponse.json(MOCK_RESPONSE);
-  }
-  
-  try {
-    // Criar cliente Supabase de forma segura
-    const supabase = createRouteHandlerClient({ cookies: () => cookieStore });
-    console.log('[API] Cliente Supabase criado');
-
-    // Verificar autenticação
-    console.log('[API] Verificando sessão do usuário');
-    let sessionData;
+    // Criar cliente Supabase de forma assíncrona
+    const supabase = await createRouteHandlerSupabase();
     
-    try {
-      const { data, error } = await supabase.auth.getSession();
-      if (error) throw error;
-      sessionData = data;
-    } catch (e) {
-      console.error('[API] Erro ao obter sessão:', e);
-      return NextResponse.json({ error: 'Erro ao verificar autenticação' }, { status: 500 });
+    // Verificar se o usuário está autenticado
+    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+    
+    if (sessionError || !session) {
+      console.error('[API] Erro de sessão ou usuário não autenticado:', sessionError);
+      return NextResponse.json({ error: 'Não autorizado' }, { status: 401 });
     }
     
-    if (!sessionData?.session) {
-      console.log('[API] Usuário não autenticado');
-      return NextResponse.json({ error: 'Não autenticado' }, { status: 401 });
-    }
+    // Verificar se o usuário é um administrador
+    const { data: userData, error: userError } = await supabase
+      .from('members')
+      .select('type')
+      .eq('user_id', session.user.id)
+      .single();
     
-    const userId = sessionData.session.user.id;
-    console.log('[API] Sessão verificada, user_id:', userId);
-
-    // Verificar se o usuário é admin - usando uma única operação
-    let memberData;
-    try {
-      console.log('[API] Verificando se o usuário é admin');
-      const { data, error } = await supabase
-        .from('members')
-        .select('type')
-        .eq('user_id', userId)
-        .single();
-        
-      if (error) throw error;
-      memberData = data;
-    } catch (e) {
-      console.error('[API] Erro ao verificar perfil do usuário:', e);
-      return NextResponse.json({ error: 'Erro ao verificar permissões' }, { status: 500 });
-    }
-
-    // Verificar se o tipo é admin (case insensitive)
-    if (!memberData || !equalsIgnoreCase(memberData.type, 'admin')) {
-      console.log('[API] Usuário não é admin:', memberData);
+    if (userError || !userData || userData.type !== 'admin') {
+      console.error('[API] Erro ao verificar tipo de usuário ou não é admin:', userError);
       return NextResponse.json({ error: 'Acesso não autorizado' }, { status: 403 });
     }
     
-    console.log('[API] Usuário confirmado como admin');
-
-    // Buscar todos os membros e filtrar os inativos manualmente
-    let allMembers;
-    try {
-      console.log('[API] Buscando todos os membros...');
-      const { data, error } = await supabase
-        .from('members')
-        .select('*');
-        
-      if (error) throw error;
-      allMembers = data;
-    } catch (e) {
-      console.error('[API] Erro ao buscar membros:', e);
-      return NextResponse.json({ error: 'Erro ao buscar membros' }, { status: 500 });
+    // Buscar usuários pendentes
+    const { data: pendingUsers, error: usersError } = await supabase
+      .from('members')
+      .select('*')
+      .eq('type', 'pending')
+      .order('created_at', { ascending: false });
+    
+    if (usersError) {
+      console.error('[API] Erro ao buscar usuários pendentes:', usersError);
+      return NextResponse.json({ error: 'Erro ao buscar usuários pendentes' }, { status: 500 });
     }
     
-    // Filtrar membros inativos (case insensitive)
-    const inactiveMembers = allMembers?.filter(member => 
-      equalsIgnoreCase(member.type, 'inativo')
-    ) || [];
-    
-    console.log('[API] Membros inativos encontrados:', inactiveMembers.length || 0);
-
-    // Se não houver membros inativos, retornar array vazio
-    if (inactiveMembers.length === 0) {
-      console.log('[API] Nenhum membro inativo encontrado');
-      return NextResponse.json({ users: [] });
-    }
-
-    // Buscar informações de perfil para cada membro inativo
-    console.log('[API] Buscando informações de perfil para membros inativos...');
-    const userIds = inactiveMembers.map(member => member.user_id);
-    
-    let profilesData: Record<string, ProfileData> = {};
-    
-    try {
-      const { data: profiles, error } = await supabase
-        .from('profiles')
-        .select('id, email, name, full_name, avatar_url, created_at')
-        .in('id', userIds);
-        
-      if (error) {
-        console.error('[API] Erro ao buscar perfis:', error);
-      } else if (profiles) {
-        // Criar um mapa de perfis por ID para facilitar o acesso
-        profiles.forEach(profile => {
-          profilesData[profile.id] = profile;
-        });
-        console.log('[API] Perfis encontrados:', profiles.length);
-      }
-    } catch (e) {
-      console.error('[API] Erro ao buscar perfis:', e);
-      // Continuar sem os dados de perfil se houver erro
-    }
-
-    // Formatar dados para retornar, combinando dados de membros e perfis
-    console.log('[API] Preparando dados para retornar...');
-    const pendingUsers = inactiveMembers.map(member => {
-      // Obter dados do perfil para este membro (se disponível)
-      const profile = profilesData[member.user_id] || {};
-      
-      // Priorizar dados da tabela profiles quando disponíveis
-      return {
-        id: member.user_id,
-        email: profile.email || 'Email não disponível',
-        created_at: profile.created_at || member.created_at,
-        user_metadata: {
-          full_name: profile.full_name || '',
-          name: profile.name || '',
-          avatar_url: profile.avatar_url || null
-        },
-        member_id: member.id,
-        nickname: member.nickname || '',
-        member_created_at: member.created_at
-      };
-    });
-    
-    console.log('[API] Dados formatados, retornando informações de', pendingUsers.length, 'usuários');
-    return NextResponse.json({ users: pendingUsers });
-  } catch (error: any) {
-    console.error('[API] Erro inesperado ao buscar usuários pendentes:', error);
-    return NextResponse.json({ error: error.message || 'Erro desconhecido' }, { status: 500 });
+    return NextResponse.json(pendingUsers || []);
+  } catch (error) {
+    console.error('[API] Erro não tratado:', error);
+    return NextResponse.json({ error: 'Erro interno do servidor' }, { status: 500 });
   }
 } 
