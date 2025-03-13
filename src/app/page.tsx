@@ -31,12 +31,12 @@ export default function HomePage() {
     {
       icon: <FaUsers className="w-6 h-6" />,
       title: "Gestão de Integrantes",
-      description: "Cadastro completo dos membros da equipe, com informações de contato e histórico de participação."
+      description: "Cadastro completo dos membros da equipe."
     },
     {
       icon: <FaCalendarAlt className="w-6 h-6" />,
       title: "Eventos",
-      description: "Organização e controle de todos os eventos da equipe, com datas, participantes e responsáveis."
+      description: "Organização e controle de todos os eventos da equipe"
     },
     {
       icon: <FaFileInvoiceDollar className="w-6 h-6" />,
@@ -90,8 +90,7 @@ export default function HomePage() {
             <span className="text-blue-600">Equipe Coringas</span>
           </h2>
           <p className="text-lg text-gray-600 mb-8">
-            Um sistema integrado para gerenciar todos os aspectos da sua equipe, 
-            desde membros até eventos e finanças.
+            Sistema desenvolvido para apoiar na gestão da equipe.
           </p>
           <div className="flex space-x-4">
             <Link href="/register" className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center">
@@ -108,14 +107,78 @@ export default function HomePage() {
           animate={{ opacity: 1, scale: 1 }}
           transition={{ duration: 0.5 }}
         >
-          {/* Imagem ilustrativa do sistema - substitua por uma imagem real depois */}
-          <div className="w-full max-w-md h-80 bg-gradient-to-r from-blue-400 to-indigo-500 rounded-xl shadow-lg relative overflow-hidden">
-            <div className="absolute inset-0 flex items-center justify-center">
-              <div className="text-white text-center">
-                <div className="w-20 h-20 mx-auto bg-white bg-opacity-20 rounded-full flex items-center justify-center mb-4">
-                  <FaUsers className="w-8 h-8" />
+          {/* Imagem ilustrativa do sistema com o logo Coringas DEVS */}
+          <div className="w-full max-w-md bg-gradient-to-br from-blue-600 via-blue-500 to-indigo-600 rounded-xl shadow-lg overflow-hidden">
+            <div className="relative p-8 py-12">
+              {/* Decoração de código no fundo */}
+              <div className="absolute inset-0 opacity-15 flex items-center justify-center overflow-hidden">
+                <div className="text-white text-sm font-mono transform rotate-6 scale-125">
+                  <div>function coringasDevs() {`{`}</div>
+                  <div>&nbsp;&nbsp;return SQTF.map(dev {`=>`} {`{`}</div>
+                  <div>&nbsp;&nbsp;&nbsp;&nbsp;dev.skills.push('excelência');</div>
+                  <div>&nbsp;&nbsp;&nbsp;&nbsp;return dev;</div>
+                  <div>&nbsp;&nbsp;{`}`});</div>
+                  <div>{`}`}</div>
                 </div>
-                <p className="text-xl font-semibold">Dashboard Interativo</p>
+              </div>
+              
+              {/* Conteúdo principal */}
+              <div className="relative z-10 text-white text-center">
+                {/* Logo do coringa estilizado */}
+                <motion.div 
+                  className="mx-auto w-48 h-48 mb-6 relative overflow-hidden rounded-full border-4 border-white/30"
+                  initial={{ opacity: 0, scale: 0.8 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ 
+                    duration: 0.8,
+                    ease: "easeOut"
+                  }}
+                  whileHover={{ 
+                    scale: 1.05,
+                    boxShadow: "0 0 25px rgba(255,255,255,0.3)",
+                    borderColor: "rgba(255,255,255,0.5)"
+                  }}
+                >
+                  <div className="absolute inset-0 bg-gradient-to-r from-indigo-500/30 to-blue-500/30 rounded-full pulse-slow"></div>
+                  <motion.div 
+                    className="absolute inset-0 flex items-center justify-center"
+                    animate={{ 
+                      rotate: [0, 2, 0, -2, 0],
+                    }}
+                    transition={{ 
+                      repeat: Infinity, 
+                      duration: 5,
+                      ease: "easeInOut" 
+                    }}
+                  >
+                    <Image 
+                      src="/coringas_logo.jpeg" 
+                      alt="Coringas DEVS Logo" 
+                      width={200}
+                      height={200}
+                      className="object-cover h-full w-full rounded-full"
+                    />
+                  </motion.div>
+                </motion.div>
+
+                <style jsx global>{`
+                  @keyframes pulse-slow {
+                    0% { opacity: 0.5; }
+                    50% { opacity: 0.8; }
+                    100% { opacity: 0.5; }
+                  }
+                  .pulse-slow {
+                    animation: pulse-slow 3s infinite;
+                  }
+                `}</style>
+                
+                <h3 className="text-3xl font-bold mb-1 tracking-wide">CORINGAS</h3>
+                <div className="flex items-center justify-center mb-3">
+                  <div className="h-0.5 w-12 bg-white opacity-50 mr-3"></div>
+                  <p className="text-xl font-bold text-yellow-300">DEVS.</p>
+                  <div className="h-0.5 w-12 bg-white opacity-50 ml-3"></div>
+                </div>
+                <p className="text-lg opacity-90 font-medium">#SQTF</p>
               </div>
             </div>
           </div>
@@ -128,7 +191,7 @@ export default function HomePage() {
           <div className="text-center mb-12">
             <h2 className="text-3xl font-bold text-gray-900 mb-4">Funcionalidades do Sistema</h2>
             <p className="text-gray-600 max-w-2xl mx-auto">
-              Conheça os principais módulos e ferramentas disponíveis para gerenciar sua equipe de forma eficiente.
+              Conheça os principais módulos e ferramentas disponíveis para gerenciar a equipe.
             </p>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
