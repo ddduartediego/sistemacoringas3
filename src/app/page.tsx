@@ -90,7 +90,7 @@ export default function HomePage() {
             <span className="text-blue-600">Equipe Coringas</span>
           </h2>
           <p className="text-lg text-gray-600 mb-8">
-            Sistema desenvolvido para apoiar na gestão da equipe.
+            Sistema desenvolvido para apoiar na gestão da equipe
           </p>
           <div className="flex space-x-4">
             <Link href="/register" className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center">
