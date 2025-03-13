@@ -1,13 +1,26 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense } from 'react';
 import Link from 'next/link';
 import { FaGoogle, FaLock, FaArrowLeft, FaInfoCircle } from 'react-icons/fa';
 import { useAuth } from '@/context/AuthContext';
 import { useSearchParams } from 'next/navigation';
 import { motion } from 'framer-motion';
 
-export default function Login() {
+// Componente de carregamento para o Suspense
+function LoginLoading() {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-50">
+      <div className="bg-white p-8 rounded-lg shadow-md text-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+        <p className="text-gray-600">Carregando...</p>
+      </div>
+    </div>
+  );
+}
+
+// Componente principal de login
+function LoginContent() {
   const { signInWithGoogle, isLoading: authLoading, error: authError } = useAuth();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -154,5 +167,14 @@ export default function Login() {
         </div>
       </footer>
     </div>
+  );
+}
+
+// Componente principal envolto em Suspense
+export default function Login() {
+  return (
+    <Suspense fallback={<LoginLoading />}>
+      <LoginContent />
+    </Suspense>
   );
 } 
