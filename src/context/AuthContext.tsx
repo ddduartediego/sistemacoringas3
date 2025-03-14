@@ -293,17 +293,48 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  // Verificar tipo de membro para redirecionar adequadamente
+  // Função para verificar o tipo de membro e redirecionar adequadamente
   const checkMemberTypeAndRedirect = async (userId: string) => {
     try {
-      const { data: member, error } = await supabase
-        .from('members')
-        .select('type')
-        .eq('user_id', userId)
-        .single();
+      console.log('Verificando tipo de membro para redirecionamento:', userId);
       
-      if (error) {
-        console.error('Erro ao verificar tipo de membro para redirecionamento:', error);
+      // Tentativa #1: Verificar diretamente no Supabase
+      let member = null;
+      try {
+        const { data, error } = await supabase
+          .from('members')
+          .select('type')
+          .eq('user_id', userId)
+          .single();
+        
+        if (error) {
+          console.error('Erro ao verificar tipo de membro para redirecionamento:', error);
+          throw error;
+        }
+        
+        member = data;
+      } catch (supabaseError) {
+        console.error('Falha ao buscar membro via Supabase, tentando API:', supabaseError);
+        
+        // Tentativa #2: Verificar via API
+        try {
+          const apiResponse = await fetch('/api/auth/check');
+          if (apiResponse.ok) {
+            const authData = await apiResponse.json();
+            if (authData.authenticated && authData.user && authData.user.role) {
+              member = { type: authData.user.role };
+              console.log('Obtido tipo de membro via API:', member.type);
+            }
+          }
+        } catch (apiError) {
+          console.error('Erro ao verificar autenticação via API:', apiError);
+        }
+      }
+      
+      if (!member) {
+        console.error('Não foi possível determinar o tipo de membro após múltiplas tentativas');
+        // Redirecionar para página de aprovação pendente como fallback
+        router.push('/pending-approval');
         return;
       }
       
@@ -326,6 +357,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     } catch (err) {
       console.error('Erro ao verificar tipo de membro:', err);
+      // Em caso de erro, tentar ir para o dashboard e deixar o middleware decidir
+      router.push('/dashboard');
     }
   };
 

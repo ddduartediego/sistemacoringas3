@@ -1,7 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  swcMinify: true,
+  // Opção swcMinify removida pois está depreciada no Next.js 15
   // Ignorar erros do ESLint durante o build
   eslint: {
     // Permitir produção mesmo com erros
