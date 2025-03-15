@@ -1,125 +1,179 @@
 'use client';
 
-import { useState, useEffect, Suspense } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import React, { useState, useEffect, Suspense } from 'react';
+import Link from 'next/link';
+import { FaGoogle, FaLock, FaArrowLeft, FaInfoCircle } from 'react-icons/fa';
 import { useAuth } from '@/context/AuthContext';
-import Image from 'next/image';
+import { useSearchParams } from 'next/navigation';
+import { motion } from 'framer-motion';
 
-// Componente interno que usa useSearchParams
-function LoginContent() {
-  const { signInWithGoogle, isLoading, error } = useAuth();
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const [message, setMessage] = useState<string | null>(null);
-  const [messageType, setMessageType] = useState<'error' | 'success' | null>(null);
-
-  useEffect(() => {
-    // Verificar parâmetros de URL
-    const errorMsg = searchParams.get('error');
-    const successMsg = searchParams.get('success');
-    const authError = searchParams.get('auth');
-
-    if (errorMsg) {
-      setMessage(decodeURIComponent(errorMsg));
-      setMessageType('error');
-    } else if (successMsg) {
-      setMessage(decodeURIComponent(successMsg));
-      setMessageType('success');
-    } else if (authError) {
-      setMessage('Você precisa estar autenticado para acessar esta página.');
-      setMessageType('error');
-    }
-  }, [searchParams]);
-
-  const handleClearAuth = async () => {
-    try {
-      // Limpar cookies manualmente
-      document.cookie = 'supabase-auth-token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
-      document.cookie = 'sb-refresh-token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
-      document.cookie = 'sb-access-token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
-      
-      // Recarregar a página para limpar o estado
-      window.location.href = '/login?success=Dados+de+autenticação+limpos';
-    } catch (err) {
-      console.error('Erro ao limpar autenticação:', err);
-      setMessage('Erro ao limpar dados de autenticação');
-      setMessageType('error');
-    }
-  };
-
+// Componente de carregamento para o Suspense
+function LoginLoading() {
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center p-4 bg-gradient-to-b from-gray-900 to-gray-800">
-      <div className="w-full max-w-md bg-gray-950 border border-gray-800 rounded-lg shadow-xl p-6">
-        <div className="space-y-1 flex flex-col items-center mb-6">
-          <div className="w-24 h-24 rounded-full overflow-hidden mb-4 border-2 border-blue-500 flex items-center justify-center bg-gray-900">
-            <Image
-              src="/coringas_logo.jpeg"
-              alt="Coringas Logo"
-              width={80}
-              height={80}
-              className="rounded-full"
-            />
-          </div>
-          <h2 className="text-2xl text-center text-white">Bem-vindo ao Sistema Coringas</h2>
-          <p className="text-center text-gray-400">
-            Faça login com sua conta Google para continuar
-          </p>
-        </div>
-        <div className="space-y-4">
-          {message && messageType && (
-            <div className={`p-4 rounded-md ${
-              messageType === 'error' 
-                ? 'bg-red-900 border border-red-800 text-red-100' 
-                : 'bg-green-900 border border-green-800 text-green-100'
-            }`}>
-              <div className="flex items-start">
-                <div className="flex-shrink-0">
-                  {messageType === 'error' ? (
-                    <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
-                    </svg>
-                  ) : (
-                    <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                    </svg>
-                  )}
-                </div>
-                <div className="ml-3">
-                  <h3 className="text-sm font-medium">{messageType === 'error' ? 'Erro' : 'Sucesso'}</h3>
-                  <div className="mt-1 text-sm">{message}</div>
-                </div>
-              </div>
-            </div>
-          )}
-          
-          <button
-            className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            onClick={signInWithGoogle}
-            disabled={isLoading}
-          >
-            {isLoading ? 'Carregando...' : 'Entrar com Google'}
-          </button>
-        </div>
-        <div className="mt-6 flex flex-col gap-2">
-          <p className="text-xs text-gray-500 text-center">
-            Ao fazer login, você concorda com os termos de serviço e política de privacidade.
-          </p>
-          <button 
-            onClick={handleClearAuth} 
-            className="text-xs mt-2 border border-gray-700 text-gray-400 hover:text-white hover:bg-gray-800 py-1 px-3 rounded-md"
-          >
-            Limpar dados de autenticação
-          </button>
-        </div>
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-50">
+      <div className="bg-white p-8 rounded-lg shadow-md text-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+        <p className="text-gray-600">Carregando...</p>
       </div>
     </div>
   );
 }
 
-// Componente principal com Suspense
-export default function LoginPage() {
+// Componente principal de login
+function LoginContent() {
+  const { signInWithGoogle, isLoading: authLoading, error: authError } = useAuth();
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const searchParams = useSearchParams();
+
+  // Verificar se há um erro de URL
+  useEffect(() => {
+    const urlError = searchParams.get('error');
+    if (urlError) {
+      setError(decodeURIComponent(urlError));
+    }
+  }, [searchParams]);
+
+  // Atualizar erro quando o erro de autenticação mudar
+  useEffect(() => {
+    if (authError) {
+      setError(authError);
+    }
+  }, [authError]);
+
+  const handleGoogleLogin = async () => {
+    try {
+      setError(null);
+      setIsLoading(true);
+      await signInWithGoogle();
+    } catch (err) {
+      console.error('Erro ao fazer login com Google:', err);
+      setError('Ocorreu um erro durante o login. Por favor, tente novamente.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Considerar o loading tanto do estado local quanto do contexto de autenticação
+  const loading = isLoading || authLoading;
+
   return (
-    <Suspense fallback={<div className="flex min-h-screen items-center justify-center bg-gradient-to-b from-gray-900 to-gray-800">Carregando...</div>}>
+    <div className="min-h-screen flex flex-col bg-gradient-to-br from-blue-50 to-indigo-50">
+      {/* Cabeçalho */}
+      <header className="bg-white shadow-sm py-4">
+        <div className="container mx-auto px-4 flex justify-between items-center">
+          <div className="flex items-center space-x-2">
+            {/* Logo do sistema */}
+            <div className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center text-white font-bold">SC</div>
+            <h1 className="text-xl font-bold text-gray-800">Sistema Coringas</h1>
+          </div>
+          <Link
+            href="/"
+            className="flex items-center text-blue-600 hover:text-blue-800"
+          >
+            <FaArrowLeft className="mr-2" /> Voltar
+          </Link>
+        </div>
+      </header>
+
+      {/* Conteúdo principal */}
+      <div className="flex-grow flex items-center justify-center p-4">
+        <div className="w-full max-w-4xl flex flex-col md:flex-row bg-white rounded-xl shadow-lg overflow-hidden">
+          {/* Lado esquerdo - Visual decorativo */}
+          <motion.div 
+            className="md:w-1/2 bg-gradient-to-br from-blue-500 to-indigo-600 p-8 text-white flex flex-col justify-center"
+            initial={{ opacity: 0, x: -50 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.5 }}
+          >
+            <div className="p-4">
+              <div className="w-16 h-16 bg-white bg-opacity-20 rounded-full flex items-center justify-center mb-6">
+                <FaLock className="w-8 h-8" />
+              </div>
+              <h2 className="text-3xl font-bold mb-4">Bem-vindo de volta!</h2>
+              <div className="bg-white bg-opacity-10 rounded-lg p-4 border border-white border-opacity-20">
+                <h3 className="font-medium mb-2 flex items-center">
+                  <FaInfoCircle className="mr-2" /> Lembrete
+                </h3>
+                <p className="text-sm">
+                  O acesso é exclusivo para membros registrados e aprovados da equipe Coringas.
+                </p>
+              </div>
+            </div>
+          </motion.div>
+          
+          {/* Lado direito - Formulário de login */}
+          <motion.div 
+            className="md:w-1/2 p-8"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.5, delay: 0.2 }}
+          >
+            <div className="h-full flex flex-col justify-center">
+              <h2 className="text-2xl font-bold text-gray-900 mb-2">Login</h2>
+              <p className="text-gray-600 mb-6">
+                Entre com sua conta para acessar o sistema
+              </p>
+              
+              {error && (
+                <div className="bg-red-50 border-l-4 border-red-500 text-red-700 p-4 mb-6 rounded" role="alert">
+                  <div className="flex items-start">
+                    <FaInfoCircle className="mt-1 mr-2" />
+                    <span>{error}</span>
+                  </div>
+                </div>
+              )}
+              
+              <button
+                onClick={handleGoogleLogin}
+                disabled={loading}
+                className="w-full flex items-center justify-center py-3 px-4 bg-white border border-gray-300 rounded-lg shadow-sm hover:bg-gray-50 transition-colors mb-4 relative overflow-hidden group"
+              >
+                <div className="absolute inset-0 w-0 bg-blue-50 transition-all duration-300 group-hover:w-full"></div>
+                <FaGoogle className="mr-3 text-red-500 relative z-10" />
+                <span className="font-medium text-gray-700 relative z-10">
+                  {loading ? 'Carregando...' : 'Entrar com Google'}
+                </span>
+              </button>
+              
+              <div className="mt-6 text-center">
+                <p className="text-sm text-gray-600 mb-4">
+                  Não tem uma conta?{' '}
+                  <Link href="/register" className="font-medium text-blue-600 hover:text-blue-500">
+                    Registre-se
+                  </Link>
+                </p>
+                
+                <p className="text-xs text-gray-500">
+                  Ao continuar, você concorda com os{' '}
+                  <Link href="/terms" className="text-blue-600 hover:underline">
+                    Termos de Serviço
+                  </Link>{' '}
+                  e{' '}
+                  <Link href="/privacy" className="text-blue-600 hover:underline">
+                    Política de Privacidade
+                  </Link>
+                </p>
+              </div>
+            </div>
+          </motion.div>
+        </div>
+      </div>
+      
+      {/* Rodapé */}
+      <footer className="bg-white shadow-inner py-4 mt-auto">
+        <div className="container mx-auto px-4 text-center text-gray-500 text-sm">
+          © {new Date().getFullYear()} Sistema Coringas. Todos os direitos reservados.
+        </div>
+      </footer>
+    </div>
+  );
+}
+
+// Componente principal envolto em Suspense
+export default function Login() {
+  return (
+    <Suspense fallback={<LoginLoading />}>
       <LoginContent />
     </Suspense>
   );

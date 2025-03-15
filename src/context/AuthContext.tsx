@@ -57,118 +57,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       console.log('AuthContext: Verificando registro de membro para o usuário:', user.id);
       
-      // Verificar primeiro no localStorage se já temos o membro em cache
-      if (typeof window !== 'undefined') {
-        try {
-          const cachedMember = localStorage.getItem(`member_${user.id}`);
-          if (cachedMember) {
-            const memberData = JSON.parse(cachedMember);
-            const cacheTime = memberData._cacheTime || 0;
-            const now = Date.now();
-            
-            // Se o cache for recente (menos de 5 minutos), usar os dados em cache
-            if (now - cacheTime < 5 * 60 * 1000) {
-              console.log('AuthContext: Usando dados de membro em cache');
-              return memberData;
-            } else {
-              console.log('AuthContext: Cache de membro expirado, buscando dados atualizados');
-            }
-          }
-        } catch (cacheError) {
-          console.error('AuthContext: Erro ao verificar cache de membro:', cacheError);
-        }
-      }
-      
-      // Tentar primeiro a abordagem via API, que é mais rápida
-      try {
-        console.log('AuthContext: Tentando verificar membro via API primeiro');
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 2000);
-        
-        const response = await fetch(`/api/members/check?userId=${user.id}`, {
-          signal: controller.signal,
-          headers: {
-            'Cache-Control': 'no-cache',
-            'Pragma': 'no-cache'
-          }
-        });
-        
-        clearTimeout(timeoutId);
-        
-        if (response.ok) {
-          const data = await response.json();
-          if (data.exists) {
-            console.log('AuthContext: Membro encontrado via API');
-            
-            // Salvar no cache local
-            if (typeof window !== 'undefined') {
-              try {
-                const memberWithCache = {
-                  ...data.member,
-                  _cacheTime: Date.now()
-                };
-                localStorage.setItem(`member_${user.id}`, JSON.stringify(memberWithCache));
-              } catch (saveError) {
-                console.error('AuthContext: Erro ao salvar membro em cache:', saveError);
-              }
-            }
-            
-            return data.member;
-          } else {
-            console.log('AuthContext: Membro não encontrado via API, tentando Supabase direto');
-          }
-        } else {
-          console.error('AuthContext: Erro na resposta da API:', response.status);
-        }
-      } catch (apiError) {
-        console.error('AuthContext: Erro ou timeout ao verificar membro via API:', apiError);
-        // Continuar para a próxima abordagem
-      }
-      
-      // Adicionar timeout para a consulta ao Supabase
-      const timeoutPromise = new Promise<{data: any, error: any}>((_, reject) => {
-        setTimeout(() => {
-          console.log('AuthContext: Timeout na consulta de membro no Supabase');
-          reject(new Error('Timeout na consulta de membro'));
-        }, 3000); // 3 segundos de timeout
-      });
-      
-      // Verificar se o usuário já tem um registro na tabela members com timeout
-      let existingMember = null;
-      let memberError = null;
-      
-      try {
-        console.log('AuthContext: Iniciando consulta ao Supabase');
-        
-        // Criar a promessa da consulta
-        const queryPromise = supabase
-          .from('members')
-          .select('*')
-          .eq('user_id', user.id)
-          .single();
-        
-        // Executar a consulta com timeout
-        const result = await Promise.race([queryPromise, timeoutPromise]);
-        existingMember = result.data;
-        memberError = result.error;
-        
-        console.log('AuthContext: Consulta ao Supabase concluída');
-        
-        // Salvar no cache local se encontrou o membro
-        if (existingMember && typeof window !== 'undefined') {
-          try {
-            const memberWithCache = {
-              ...existingMember,
-              _cacheTime: Date.now()
-            };
-            localStorage.setItem(`member_${user.id}`, JSON.stringify(memberWithCache));
-          } catch (saveError) {
-            console.error('AuthContext: Erro ao salvar membro em cache:', saveError);
-          }
-        }
-      } catch (queryError) {
-        console.error('AuthContext: Erro ou timeout na consulta ao Supabase:', queryError);
-      }
+      // Verificar se o usuário já tem um registro na tabela members
+      const { data: existingMember, error: memberError } = await supabase
+        .from('members')
+        .select('*')
+        .eq('user_id', user.id)
+        .single();
       
       if (memberError && memberError.code !== 'PGRST116') {
         console.error('AuthContext: Erro ao verificar membro existente:', memberError);
@@ -189,20 +83,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try {
         const newMember = await syncUserProfileAfterLogin(user.id, userEmail, userName);
         console.log('AuthContext: Novo membro criado com sucesso');
-        
-        // Salvar o novo membro no cache local
-        if (newMember && typeof window !== 'undefined') {
-          try {
-            const memberWithCache = {
-              ...newMember,
-              _cacheTime: Date.now()
-            };
-            localStorage.setItem(`member_${user.id}`, JSON.stringify(memberWithCache));
-          } catch (saveError) {
-            console.error('AuthContext: Erro ao salvar novo membro em cache:', saveError);
-          }
-        }
-        
         return newMember;
       } catch (syncError) {
         console.error('AuthContext: Erro ao criar membro:', syncError);
@@ -361,62 +241,45 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  // Função de logout com timeout para evitar travamento
+  // Função de logout 
   const signOut = async () => {
-    console.log('AuthContext: Iniciando processo de logout...');
-    
-    // Limpar o estado imediatamente para feedback visual ao usuário
-    setUser(null);
-    
-    // Adicionar um timeout para garantir que o processo não fique travado
-    const timeoutPromise = new Promise<void>((_, reject) => {
-      setTimeout(() => {
-        console.log('AuthContext: Timeout durante logout, forçando limpeza');
-        reject(new Error('Timeout ao fazer logout'));
-      }, 3000); // 3 segundos de timeout
-    });
-    
     try {
-      // Tentar fazer logout normalmente
-      console.log('AuthContext: Enviando requisição de logout para o Supabase');
-      const logoutPromise = supabase.auth.signOut();
+      console.log('AuthContext: Iniciando processo de logout...');
+      setIsLoading(true);
+      setError(null);
       
-      // Usar Promise.race para aplicar o timeout
-      await Promise.race([logoutPromise, timeoutPromise]);
+      // Chamada para encerrar a sessão no Supabase
+      const { error } = await supabase.auth.signOut({
+        scope: 'local' // Especificando 'local' para limpar apenas o armazenamento local, não todas as sessões do usuário em outros dispositivos
+      });
       
-      console.log('AuthContext: Logout realizado com sucesso no Supabase');
-    } catch (error) {
-      console.error('AuthContext: Erro ou timeout durante logout:', error);
-    } finally {
-      // Sempre executar a limpeza local, independente do resultado da chamada ao Supabase
-      console.log('AuthContext: Executando limpeza local de dados de autenticação');
-      
-      // Limpar cookies manualmente para garantir
-      if (typeof document !== 'undefined') {
-        try {
-          // Usar a função auxiliar para limpar todos os dados
-          const { clearAuthData } = await import('@/lib/auth');
-          clearAuthData();
-        } catch (cleanupError) {
-          console.error('AuthContext: Erro ao limpar dados de autenticação:', cleanupError);
-          
-          // Fallback: tentar limpar manualmente
-          document.cookie = 'supabase-auth-token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
-          document.cookie = 'sb-refresh-token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
-          document.cookie = 'sb-access-token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
-          localStorage.removeItem('supabase.auth.token');
-        }
+      if (error) {
+        throw error;
       }
       
-      // Redirecionar para a página de login
-      console.log('AuthContext: Redirecionando para página de login');
+      console.log('AuthContext: Logout bem-sucedido. Redirecionando para página inicial...');
       
-      // Usar window.location para garantir um redirecionamento completo
-      if (typeof window !== 'undefined') {
-        window.location.href = '/login?signout=true';
-      } else {
-        router.push('/login?signout=true');
-      }
+      // Resetar o estado da aplicação
+      setUser(null);
+      
+      // Adicionar um pequeno atraso antes do redirecionamento para garantir que tudo seja limpo
+      setTimeout(() => {
+        // Atualizar a página para limpar quaisquer dados de estado que possam estar em memória
+        router.refresh();
+        
+        // Redirecionar para a página principal com parâmetro de logout
+        // Isso permite que o middleware saiba que este é um redirecionamento de logout
+        window.location.href = '/?logout=true';
+      }, 300);
+    } catch (error: any) {
+      console.error('AuthContext: Erro durante o processo de logout:', error.message);
+      setError(`Falha ao fazer logout: ${error.message}`);
+      setIsLoading(false);
+      
+      // Mesmo em caso de erro, tentar redirecionar o usuário
+      setTimeout(() => {
+        window.location.href = '/?logout=true';
+      }, 2000);
     }
   };
 
@@ -448,8 +311,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           const apiResponse = await fetch('/api/auth/check');
           if (apiResponse.ok) {
             const authData = await apiResponse.json();
-            if (authData.authenticated && authData.user && authData.user.role) {
-              member = { type: authData.user.role };
+            if (authData.authenticated && authData.user && authData.user.userMetadata && authData.user.userMetadata.role) {
+              member = { type: authData.user.userMetadata.role };
               console.log('AuthContext: Obtido tipo de membro via API:', member.type);
             }
           }

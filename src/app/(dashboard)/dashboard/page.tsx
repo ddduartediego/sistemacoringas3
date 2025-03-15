@@ -13,6 +13,7 @@ import Link from 'next/link';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { Event, Member, Charge } from '@/types';
 import { useRouter } from 'next/navigation';
+import { supabase } from '@/lib/supabase';
 
 // Importações mockadas temporariamente até que os dados reais possam ser carregados
 // Remova essas funções e importe as reais quando o problema de autenticação estiver resolvido
@@ -312,7 +313,6 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [sessionChecked, setSessionChecked] = useState(false);
-  const [loadingTimeout, setLoadingTimeout] = useState(false);
   const router = useRouter();
 
   // Verificação de sessão independente - para garantir que temos dados mesmo em produção
@@ -321,170 +321,25 @@ export default function Dashboard() {
       try {
         console.log('Dashboard: Verificação independente de sessão iniciada');
         
-        // Verificar primeiro no localStorage se já temos dados de autenticação
-        if (typeof window !== 'undefined') {
-          try {
-            const hasAuthKeys = Object.keys(localStorage).some(key => 
-              key.includes('supabase') || key.includes('sb-')
-            );
-            
-            if (hasAuthKeys) {
-              console.log('Dashboard: Tokens de autenticação encontrados no localStorage');
-              // Se temos tokens, podemos considerar a sessão como verificada
-              // e continuar com o carregamento de dados
-              setSessionChecked(true);
-            }
-          } catch (localStorageError) {
-            console.error('Dashboard: Erro ao verificar localStorage:', localStorageError);
-          }
+        // Verificar a sessão utilizando a biblioteca do Supabase
+        const { data, error } = await supabase.auth.getSession();
+        
+        if (error) {
+          console.error('Dashboard: Erro ao verificar sessão:', error.message);
+          throw error;
         }
         
-        // Criar cliente Supabase com timeout
-        let supabase;
-        try {
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 2000);
-          
-          supabase = createClientComponentClient();
-          clearTimeout(timeoutId);
-        } catch (clientError) {
-          console.error('Dashboard: Erro ao criar cliente Supabase:', clientError);
-          // Mesmo com erro, continuar para não bloquear a interface
-          setSessionChecked(true);
-          return;
-        }
+        console.log('Dashboard: Sessão verificada:', data.session ? 'Ativa' : 'Inativa');
         
-        // Verificar sessão com timeout
-        try {
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 2000);
-          
-          const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-          clearTimeout(timeoutId);
-          
-          console.log('Dashboard: Resultado da verificação de sessão:', 
-            sessionData?.session ? 'Sessão encontrada' : 'Sem sessão',
-            sessionError ? `Erro: ${sessionError.message}` : 'Sem erros'
-          );
-          
-          // Se não há sessão, redirecionar para login
-          if (!sessionData?.session && !sessionError) {
-            console.log('Dashboard: Sem sessão detectada, redirecionando para login...');
-            router.push('/login');
-            return;
-          }
-          
-          if (sessionError) {
-            console.error('Dashboard: Erro na verificação independente de sessão:', sessionError);
-          }
-        } catch (sessionError) {
-          console.error('Dashboard: Erro ou timeout ao verificar sessão:', sessionError);
-          // Continuar mesmo com erro para não bloquear a interface
-        }
-        
-        // Verificar se estamos em produção (Vercel)
-        const isProduction = typeof window !== 'undefined' && 
-          (window.location.hostname.includes('vercel.app') || 
-           window.location.hostname !== 'localhost');
-        
-        console.log('Dashboard: Ambiente detectado:', isProduction ? 'Produção' : 'Desenvolvimento');
-        
-        // Em produção, tentar uma abordagem alternativa para verificar a autenticação
-        if (isProduction) {
-          try {
-            console.log('Dashboard: Tentando verificação alternativa via API em produção');
-            
-            // Adicionar timeout para a chamada de API
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 2000);
-            
-            const response = await fetch('/api/auth/check', {
-              signal: controller.signal,
-              cache: 'no-store',
-              headers: {
-                'Cache-Control': 'no-cache',
-                'Pragma': 'no-cache'
-              }
-            });
-            
-            clearTimeout(timeoutId);
-            
-            if (response.ok) {
-              const authData = await response.json();
-              console.log('Dashboard: Resposta da API de verificação:', authData);
-              
-              if (authData.authenticated) {
-                console.log('Dashboard: Usuário autenticado via API');
-                // Se a API confirmar que o usuário está autenticado, prosseguir
-                setSessionChecked(true);
-                return;
-              } else {
-                console.log('Dashboard: Usuário não autenticado via API, redirecionando');
-                router.push('/login');
-                return;
-              }
-            } else {
-              console.error('Dashboard: Erro na verificação via API:', response.status);
-            }
-          } catch (apiError: any) {
-            console.error('Dashboard: Erro ao chamar API de verificação:', apiError);
-            
-            // Se o erro for de timeout, continuar mesmo assim
-            if (apiError?.name === 'AbortError') {
-              console.log('Dashboard: Timeout na verificação via API, continuando mesmo assim');
-              setSessionChecked(true);
-              return;
-            }
-          }
-        }
-        
-        // Se chegou aqui, marcar a sessão como verificada
         setSessionChecked(true);
-      } catch (err) {
-        console.error('Dashboard: Exceção durante verificação de sessão:', err);
-        // Em caso de erro, tentar uma última alternativa - verificar localStorage
-        try {
-          if (typeof window !== 'undefined') {
-            // Verificar se há algum indício de autenticação no localStorage
-            const hasAuthKeys = Object.keys(localStorage).some(key => 
-              key.includes('supabase') || key.includes('sb-')
-            );
-            
-            console.log('Dashboard: Verificação de localStorage:', hasAuthKeys ? 'Tokens encontrados' : 'Sem tokens');
-            
-            if (!hasAuthKeys) {
-              console.log('Dashboard: Sem tokens no localStorage, redirecionando para login');
-              router.push('/login');
-              return;
-            }
-          }
-        } catch (localStorageError) {
-          console.error('Dashboard: Erro ao verificar localStorage:', localStorageError);
-        }
-        
+      } catch (error) {
+        console.error('Dashboard: Erro ao verificar sessão:', error);
         setSessionChecked(true); // Mesmo com erro, marcamos como verificado para não bloquear o fluxo
       }
     };
     
-    // Adicionar timeout para evitar carregamento infinito
-    const loadingTimeoutId = setTimeout(() => {
-      console.log('Dashboard: Tempo de carregamento excedido, ativando controles de fallback');
-      setLoadingTimeout(true);
-      
-      // Se ainda não verificou a sessão após o timeout, forçar como verificada
-      // para permitir que o usuário interaja com a interface
-      if (!sessionChecked) {
-        console.log('Dashboard: Forçando sessão como verificada após timeout');
-        setSessionChecked(true);
-      }
-    }, 5000); // 5 segundos de timeout
-    
     checkSession();
-    
-    return () => {
-      clearTimeout(loadingTimeoutId);
-    };
-  }, [router, sessionChecked]);
+  }, [router]);
 
   // Log do estado atual para debug
   useEffect(() => {
@@ -669,157 +524,16 @@ export default function Dashboard() {
     fetchData();
   }, [authLoading, user, sessionChecked]);
 
-  // Mostrar uma mensagem de erro se a verificação de sessão e a autenticação falharem
-  if (!authLoading && !user && sessionChecked) {
+  // Mostrar tela de carregamento enquanto verifica a autenticação
+  if (authLoading || (loading && user)) {
     return (
-      <div className="flex items-center justify-center min-h-screen p-4">
-        <div className="text-center max-w-md w-full bg-white rounded-lg shadow-md p-6">
-          <div className="w-16 h-16 bg-yellow-100 text-yellow-600 rounded-full flex items-center justify-center mx-auto mb-4">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-            </svg>
-          </div>
-          <h2 className="text-xl font-semibold mb-2">Sessão não encontrada</h2>
-          <p className="text-gray-600 mb-4">Não foi possível verificar sua sessão. Por favor, faça login novamente para acessar o dashboard.</p>
-          <div className="flex flex-col space-y-2">
-            <Link href="/login" className="bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded transition-colors">
-              Ir para a página de login
-            </Link>
-            <button 
-              onClick={() => window.location.reload()} 
-              className="bg-gray-200 hover:bg-gray-300 text-gray-800 font-medium py-2 px-4 rounded transition-colors"
-            >
-              Tentar novamente
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // Mostrar indicador de carregamento com timeout para evitar carregamento infinito
-  if (authLoading || loading || !sessionChecked) {
-    return (
-      <div className="flex items-center justify-center min-h-screen p-4">
-        <div className="text-center max-w-md w-full bg-white rounded-lg shadow-md p-6">
-          <div className="w-12 h-12 border-t-4 border-blue-500 border-solid rounded-full animate-spin mx-auto mb-4"></div>
-          <p className="text-lg font-medium text-gray-800 mb-2">
-            {!sessionChecked ? 'Verificando sessão...' : 
-             authLoading ? 'Verificando autenticação...' : 'Carregando dados...'}
-          </p>
+      <div className="flex items-center justify-center min-h-screen p-4 bg-gradient-to-br from-blue-50 to-indigo-50">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <h2 className="text-xl font-semibold text-gray-800 mb-2">Carregando...</h2>
           <p className="text-sm text-gray-600 mb-6">
             Isso pode levar alguns instantes. Aguarde, por favor.
           </p>
-          
-          {/* Mostrar informações de depuração e opções em caso de timeout */}
-          {loadingTimeout && (
-            <div className="mt-6 space-y-4">
-              <div className="text-left bg-gray-100 p-4 rounded-md text-sm max-w-lg mx-auto">
-                <p className="font-semibold mb-2">Informações de depuração:</p>
-                <ul className="space-y-1 text-gray-700">
-                  <li>• Sessão verificada: {sessionChecked ? 'Sim' : 'Não'}</li>
-                  <li>• Carregando autenticação: {authLoading ? 'Sim' : 'Não'}</li>
-                  <li>• Carregando dados: {loading ? 'Sim' : 'Não'}</li>
-                  <li>• Erro de autenticação: {authError ? authError : 'Não'}</li>
-                </ul>
-              </div>
-              
-              <div className="flex flex-col space-y-2">
-                <button 
-                  onClick={() => window.location.reload()} 
-                  className="bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded transition-colors"
-                >
-                  Tentar novamente
-                </button>
-                <button 
-                  onClick={() => {
-                    console.log('Dashboard: Redirecionando para login manualmente');
-                    window.location.href = '/login';
-                  }} 
-                  className="bg-gray-200 hover:bg-gray-300 text-gray-800 font-medium py-2 px-4 rounded transition-colors"
-                >
-                  Voltar para login
-                </button>
-                <button 
-                  onClick={() => {
-                    console.log('Dashboard: Limpando dados de autenticação');
-                    // Importar dinamicamente para evitar problemas de SSR
-                    import('@/lib/auth').then(({ clearAuthData }) => {
-                      clearAuthData();
-                      window.location.href = '/login?cleared=true';
-                    });
-                  }} 
-                  className="bg-red-100 hover:bg-red-200 text-red-800 font-medium py-2 px-4 rounded transition-colors"
-                >
-                  Limpar dados e voltar para login
-                </button>
-              </div>
-            </div>
-          )}
-          
-          {/* Adicionar botão para reiniciar após 10 segundos - versão sem timeout state */}
-          {!loadingTimeout && (
-            <div className="mt-4" id="loading-timeout">
-              <script dangerouslySetInnerHTML={{
-                __html: `
-                  setTimeout(() => {
-                    const el = document.getElementById('loading-timeout');
-                    if (el) {
-                      el.innerHTML = '<button onclick="window.location.reload()" class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded">Carregamento demorado. Clique para tentar novamente</button>';
-                    }
-                  }, 10000);
-                `
-              }} />
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  // Se há erro no carregamento de dados, mostrar mensagem de erro
-  if (error) {
-    return (
-      <div className="max-w-7xl mx-auto p-6">
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded relative">
-          <h2 className="font-bold mb-2">Erro ao carregar dados</h2>
-          <p className="mb-4">{error}</p>
-          <div className="flex space-x-2">
-            <button 
-              onClick={() => window.location.reload()} 
-              className="bg-red-700 text-white px-4 py-2 rounded hover:bg-red-800 transition-colors"
-            >
-              Tentar novamente
-            </button>
-            <button 
-              onClick={async () => {
-                // Forçar carregamento de dados mockados
-                setLoading(true);
-                try {
-                  const mockEvents = await mockGetFutureEvents();
-                  setEvents(mockEvents as Event[]);
-                  
-                  const mockMembers = await mockGetAllMembers();
-                  setMembers(mockMembers as Member[]);
-                  
-                  const mockCharges = await mockGetPendingChargesByMemberId();
-                  setPendingCharges(mockCharges.map(charge => ({
-                    ...charge,
-                    status: convertChargeStatus(charge.status)
-                  })) as Charge[]);
-                  
-                  setError(null);
-                } catch (e) {
-                  console.error('Dashboard: Erro ao carregar dados mockados:', e);
-                } finally {
-                  setLoading(false);
-                }
-              }} 
-              className="bg-gray-200 text-gray-800 px-4 py-2 rounded hover:bg-gray-300 transition-colors"
-            >
-              Usar dados de exemplo
-            </button>
-          </div>
         </div>
       </div>
     );
