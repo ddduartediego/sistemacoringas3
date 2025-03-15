@@ -57,6 +57,74 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       console.log('AuthContext: Verificando registro de membro para o usuário:', user.id);
       
+      // Verificar primeiro no localStorage se já temos o membro em cache
+      if (typeof window !== 'undefined') {
+        try {
+          const cachedMember = localStorage.getItem(`member_${user.id}`);
+          if (cachedMember) {
+            const memberData = JSON.parse(cachedMember);
+            const cacheTime = memberData._cacheTime || 0;
+            const now = Date.now();
+            
+            // Se o cache for recente (menos de 5 minutos), usar os dados em cache
+            if (now - cacheTime < 5 * 60 * 1000) {
+              console.log('AuthContext: Usando dados de membro em cache');
+              return memberData;
+            } else {
+              console.log('AuthContext: Cache de membro expirado, buscando dados atualizados');
+            }
+          }
+        } catch (cacheError) {
+          console.error('AuthContext: Erro ao verificar cache de membro:', cacheError);
+        }
+      }
+      
+      // Tentar primeiro a abordagem via API, que é mais rápida
+      try {
+        console.log('AuthContext: Tentando verificar membro via API primeiro');
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 2000);
+        
+        const response = await fetch(`/api/members/check?userId=${user.id}`, {
+          signal: controller.signal,
+          headers: {
+            'Cache-Control': 'no-cache',
+            'Pragma': 'no-cache'
+          }
+        });
+        
+        clearTimeout(timeoutId);
+        
+        if (response.ok) {
+          const data = await response.json();
+          if (data.exists) {
+            console.log('AuthContext: Membro encontrado via API');
+            
+            // Salvar no cache local
+            if (typeof window !== 'undefined') {
+              try {
+                const memberWithCache = {
+                  ...data.member,
+                  _cacheTime: Date.now()
+                };
+                localStorage.setItem(`member_${user.id}`, JSON.stringify(memberWithCache));
+              } catch (saveError) {
+                console.error('AuthContext: Erro ao salvar membro em cache:', saveError);
+              }
+            }
+            
+            return data.member;
+          } else {
+            console.log('AuthContext: Membro não encontrado via API, tentando Supabase direto');
+          }
+        } else {
+          console.error('AuthContext: Erro na resposta da API:', response.status);
+        }
+      } catch (apiError) {
+        console.error('AuthContext: Erro ou timeout ao verificar membro via API:', apiError);
+        // Continuar para a próxima abordagem
+      }
+      
       // Adicionar timeout para a consulta ao Supabase
       const timeoutPromise = new Promise<{data: any, error: any}>((_, reject) => {
         setTimeout(() => {
@@ -85,29 +153,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         memberError = result.error;
         
         console.log('AuthContext: Consulta ao Supabase concluída');
+        
+        // Salvar no cache local se encontrou o membro
+        if (existingMember && typeof window !== 'undefined') {
+          try {
+            const memberWithCache = {
+              ...existingMember,
+              _cacheTime: Date.now()
+            };
+            localStorage.setItem(`member_${user.id}`, JSON.stringify(memberWithCache));
+          } catch (saveError) {
+            console.error('AuthContext: Erro ao salvar membro em cache:', saveError);
+          }
+        }
       } catch (queryError) {
         console.error('AuthContext: Erro ou timeout na consulta ao Supabase:', queryError);
-        
-        // Em caso de timeout, tentar uma abordagem alternativa via API
-        try {
-          console.log('AuthContext: Tentando verificar membro via API');
-          const response = await fetch(`/api/members/check?userId=${user.id}`, {
-            headers: {
-              'Cache-Control': 'no-cache',
-              'Pragma': 'no-cache'
-            }
-          });
-          
-          if (response.ok) {
-            const data = await response.json();
-            if (data.exists) {
-              console.log('AuthContext: Membro encontrado via API');
-              existingMember = data.member;
-            }
-          }
-        } catch (apiError) {
-          console.error('AuthContext: Erro ao verificar membro via API:', apiError);
-        }
       }
       
       if (memberError && memberError.code !== 'PGRST116') {
@@ -129,6 +189,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try {
         const newMember = await syncUserProfileAfterLogin(user.id, userEmail, userName);
         console.log('AuthContext: Novo membro criado com sucesso');
+        
+        // Salvar o novo membro no cache local
+        if (newMember && typeof window !== 'undefined') {
+          try {
+            const memberWithCache = {
+              ...newMember,
+              _cacheTime: Date.now()
+            };
+            localStorage.setItem(`member_${user.id}`, JSON.stringify(memberWithCache));
+          } catch (saveError) {
+            console.error('AuthContext: Erro ao salvar novo membro em cache:', saveError);
+          }
+        }
+        
         return newMember;
       } catch (syncError) {
         console.error('AuthContext: Erro ao criar membro:', syncError);

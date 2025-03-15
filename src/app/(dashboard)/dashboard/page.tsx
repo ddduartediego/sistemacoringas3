@@ -320,23 +320,66 @@ export default function Dashboard() {
     const checkSession = async () => {
       try {
         console.log('Dashboard: Verificação independente de sessão iniciada');
-        const supabase = createClientComponentClient();
-        const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
         
-        console.log('Dashboard: Resultado da verificação de sessão:', 
-          sessionData?.session ? 'Sessão encontrada' : 'Sem sessão',
-          sessionError ? `Erro: ${sessionError.message}` : 'Sem erros'
-        );
+        // Verificar primeiro no localStorage se já temos dados de autenticação
+        if (typeof window !== 'undefined') {
+          try {
+            const hasAuthKeys = Object.keys(localStorage).some(key => 
+              key.includes('supabase') || key.includes('sb-')
+            );
+            
+            if (hasAuthKeys) {
+              console.log('Dashboard: Tokens de autenticação encontrados no localStorage');
+              // Se temos tokens, podemos considerar a sessão como verificada
+              // e continuar com o carregamento de dados
+              setSessionChecked(true);
+            }
+          } catch (localStorageError) {
+            console.error('Dashboard: Erro ao verificar localStorage:', localStorageError);
+          }
+        }
         
-        // Se não há sessão, redirecionar para login
-        if (!sessionData?.session && !sessionError) {
-          console.log('Dashboard: Sem sessão detectada, redirecionando para login...');
-          router.push('/login');
+        // Criar cliente Supabase com timeout
+        let supabase;
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 2000);
+          
+          supabase = createClientComponentClient();
+          clearTimeout(timeoutId);
+        } catch (clientError) {
+          console.error('Dashboard: Erro ao criar cliente Supabase:', clientError);
+          // Mesmo com erro, continuar para não bloquear a interface
+          setSessionChecked(true);
           return;
         }
         
-        if (sessionError) {
-          console.error('Dashboard: Erro na verificação independente de sessão:', sessionError);
+        // Verificar sessão com timeout
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 2000);
+          
+          const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+          clearTimeout(timeoutId);
+          
+          console.log('Dashboard: Resultado da verificação de sessão:', 
+            sessionData?.session ? 'Sessão encontrada' : 'Sem sessão',
+            sessionError ? `Erro: ${sessionError.message}` : 'Sem erros'
+          );
+          
+          // Se não há sessão, redirecionar para login
+          if (!sessionData?.session && !sessionError) {
+            console.log('Dashboard: Sem sessão detectada, redirecionando para login...');
+            router.push('/login');
+            return;
+          }
+          
+          if (sessionError) {
+            console.error('Dashboard: Erro na verificação independente de sessão:', sessionError);
+          }
+        } catch (sessionError) {
+          console.error('Dashboard: Erro ou timeout ao verificar sessão:', sessionError);
+          // Continuar mesmo com erro para não bloquear a interface
         }
         
         // Verificar se estamos em produção (Vercel)
@@ -353,7 +396,7 @@ export default function Dashboard() {
             
             // Adicionar timeout para a chamada de API
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 3000);
+            const timeoutId = setTimeout(() => controller.abort(), 2000);
             
             const response = await fetch('/api/auth/check', {
               signal: controller.signal,
@@ -434,7 +477,7 @@ export default function Dashboard() {
         console.log('Dashboard: Forçando sessão como verificada após timeout');
         setSessionChecked(true);
       }
-    }, 5000); // Reduzido de 10s para 5s
+    }, 5000); // 5 segundos de timeout
     
     checkSession();
     
