@@ -339,9 +339,61 @@ export default function Dashboard() {
           console.error('Dashboard: Erro na verificação independente de sessão:', sessionError);
         }
         
+        // Verificar se estamos em produção (Vercel)
+        const isProduction = typeof window !== 'undefined' && window.location.hostname.includes('vercel.app');
+        console.log('Dashboard: Ambiente detectado:', isProduction ? 'Produção' : 'Desenvolvimento');
+        
+        // Em produção, tentar uma abordagem alternativa para verificar a autenticação
+        if (isProduction) {
+          try {
+            console.log('Dashboard: Tentando verificação alternativa via API em produção');
+            const response = await fetch('/api/auth/check');
+            if (response.ok) {
+              const authData = await response.json();
+              console.log('Dashboard: Resposta da API de verificação:', authData);
+              
+              if (authData.authenticated) {
+                console.log('Dashboard: Usuário autenticado via API');
+                // Se a API confirmar que o usuário está autenticado, prosseguir
+                setSessionChecked(true);
+                return;
+              } else {
+                console.log('Dashboard: Usuário não autenticado via API, redirecionando');
+                router.push('/login');
+                return;
+              }
+            } else {
+              console.error('Dashboard: Erro na verificação via API:', response.status);
+            }
+          } catch (apiError) {
+            console.error('Dashboard: Erro ao chamar API de verificação:', apiError);
+          }
+        }
+        
+        // Se chegou aqui, marcar a sessão como verificada
         setSessionChecked(true);
       } catch (err) {
         console.error('Dashboard: Exceção durante verificação de sessão:', err);
+        // Em caso de erro, tentar uma última alternativa - verificar localStorage
+        try {
+          if (typeof window !== 'undefined') {
+            // Verificar se há algum indício de autenticação no localStorage
+            const hasAuthKeys = Object.keys(localStorage).some(key => 
+              key.includes('supabase') || key.includes('sb-')
+            );
+            
+            console.log('Dashboard: Verificação de localStorage:', hasAuthKeys ? 'Tokens encontrados' : 'Sem tokens');
+            
+            if (!hasAuthKeys) {
+              console.log('Dashboard: Sem tokens no localStorage, redirecionando para login');
+              router.push('/login');
+              return;
+            }
+          }
+        } catch (localStorageError) {
+          console.error('Dashboard: Erro ao verificar localStorage:', localStorageError);
+        }
+        
         setSessionChecked(true); // Mesmo com erro, marcamos como verificado para não bloquear o fluxo
       }
     };
@@ -350,6 +402,13 @@ export default function Dashboard() {
     const loadingTimeoutId = setTimeout(() => {
       console.log('Dashboard: Tempo de carregamento excedido, ativando controles de fallback');
       setLoadingTimeout(true);
+      
+      // Se ainda não verificou a sessão após o timeout, forçar como verificada
+      // para permitir que o usuário interaja com a interface
+      if (!sessionChecked) {
+        console.log('Dashboard: Forçando sessão como verificada após timeout');
+        setSessionChecked(true);
+      }
     }, 10000);
     
     checkSession();
@@ -357,7 +416,7 @@ export default function Dashboard() {
     return () => {
       clearTimeout(loadingTimeoutId);
     };
-  }, [router]);
+  }, [router, sessionChecked]);
 
   // Log do estado atual para debug
   useEffect(() => {
@@ -387,96 +446,135 @@ export default function Dashboard() {
     // Função para buscar dados
     const fetchData = async () => {
       try {
-        console.log('Dashboard - Iniciando carregamento de dados');
+        console.log('Dashboard: Iniciando carregamento de dados');
         setLoading(true);
         
-        // Adicionando um tempo limite para evitar carregamento infinito
-        const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Tempo limite de carregamento excedido')), 15000)
-        );
+        // Adicionar um contador de tentativas para evitar loops infinitos
+        let retryCount = 0;
+        const maxRetries = 3;
         
-        // Carregar eventos com tratamento de erro e timeout
-        let eventData: Event[] = [];
-        try {
-          const eventPromise = getFutureEvents();
-          eventData = await Promise.race([eventPromise, timeoutPromise]) as Event[];
-          console.log('Eventos carregados:', eventData.length);
-        } catch (e) {
-          console.error('Erro ao carregar eventos:', e);
-          eventData = await mockGetFutureEvents();
-          console.log('Usando eventos mockados após erro');
-        }
-        setEvents(eventData);
-
-        // Carregar lista de membros com tratamento de erro
-        let memberData: Member[] = [];
-        try {
-          memberData = await getAllMembers();
-          console.log('Membros carregados:', memberData.length);
-        } catch (e) {
-          console.error('Erro ao carregar membros:', e);
-          memberData = [];
-        }
-        setMembers(memberData);
-
-        // Se o usuário estiver autenticado, tentar buscar o membro correspondente
-        let memberInfo = null;
-        if (user?.id) {
+        // Função interna para tentar carregar dados com retry
+        const attemptDataLoad = async () => {
           try {
-            memberInfo = await getMemberByUserId(user.id);
-            console.log('Dados do membro atual:', memberInfo);
-            setCurrentMember(memberInfo);
-          } catch (e) {
-            console.error('Erro ao buscar membro:', e);
-          }
-          
-          // Buscar cobranças pendentes para o membro
-          let chargeData: Charge[] = [];
-          if (memberInfo?.id) {
+            // Adicionando um tempo limite para evitar carregamento infinito
+            const timeoutPromise = new Promise((_, reject) => 
+              setTimeout(() => reject(new Error('Tempo limite de carregamento excedido')), 8000)
+            );
+            
+            // Carregar eventos com tratamento de erro e timeout
+            let eventData: Event[] = [];
             try {
-              chargeData = await getPendingChargesByMemberId(memberInfo.id);
-              console.log('Cobranças carregadas:', chargeData.length);
+              console.log(`Dashboard: Tentativa ${retryCount + 1} de carregar eventos`);
+              const eventPromise = getFutureEvents();
+              eventData = await Promise.race([eventPromise, timeoutPromise]) as Event[];
+              console.log('Dashboard: Eventos carregados:', eventData.length);
             } catch (e) {
-              console.error('Erro ao carregar cobranças:', e);
-              chargeData = [];
+              console.error('Dashboard: Erro ao carregar eventos:', e);
+              eventData = await mockGetFutureEvents();
+              console.log('Dashboard: Usando eventos mockados após erro');
             }
-            setPendingCharges(chargeData);
-          } else {
-            console.log('Membro não encontrado para o usuário autenticado, usando dados mockados');
+            setEvents(eventData);
+
+            // Carregar lista de membros com tratamento de erro
+            let memberData: Member[] = [];
             try {
-              const mockCharges = await mockGetPendingChargesByMemberId();
-              chargeData = mockCharges.map(charge => ({
-                ...charge,
-                status: convertChargeStatus(charge.status)
-              }));
+              console.log(`Dashboard: Tentativa ${retryCount + 1} de carregar membros`);
+              memberData = await getAllMembers();
+              console.log('Dashboard: Membros carregados:', memberData.length);
             } catch (e) {
-              console.error('Erro ao carregar cobranças mockadas:', e);
-              chargeData = [];
+              console.error('Dashboard: Erro ao carregar membros:', e);
+              memberData = await mockGetAllMembers() as Member[];
+              console.log('Dashboard: Usando membros mockados após erro');
             }
-            setPendingCharges(chargeData);
+            setMembers(memberData);
+
+            // Se o usuário estiver autenticado, tentar buscar o membro correspondente
+            let memberInfo = null;
+            if (user?.id) {
+              try {
+                console.log(`Dashboard: Tentativa ${retryCount + 1} de carregar membro atual`);
+                memberInfo = await getMemberByUserId(user.id);
+                console.log('Dashboard: Dados do membro atual:', memberInfo);
+                setCurrentMember(memberInfo);
+              } catch (e) {
+                console.error('Dashboard: Erro ao buscar membro:', e);
+              }
+              
+              // Buscar cobranças pendentes para o membro
+              let chargeData: Charge[] = [];
+              if (memberInfo?.id) {
+                try {
+                  console.log(`Dashboard: Tentativa ${retryCount + 1} de carregar cobranças`);
+                  chargeData = await getPendingChargesByMemberId(memberInfo.id);
+                  console.log('Dashboard: Cobranças carregadas:', chargeData.length);
+                } catch (e) {
+                  console.error('Dashboard: Erro ao carregar cobranças:', e);
+                  const mockCharges = await mockGetPendingChargesByMemberId();
+                  chargeData = mockCharges.map(charge => ({
+                    ...charge,
+                    status: convertChargeStatus(charge.status)
+                  })) as Charge[];
+                  console.log('Dashboard: Usando cobranças mockadas após erro');
+                }
+                setPendingCharges(chargeData);
+              } else {
+                console.log('Dashboard: Membro não encontrado para o usuário autenticado, usando dados mockados');
+                try {
+                  const mockCharges = await mockGetPendingChargesByMemberId();
+                  chargeData = mockCharges.map(charge => ({
+                    ...charge,
+                    status: convertChargeStatus(charge.status)
+                  })) as Charge[];
+                } catch (e) {
+                  console.error('Dashboard: Erro ao carregar cobranças mockadas:', e);
+                  chargeData = [];
+                }
+                setPendingCharges(chargeData);
+              }
+            } else {
+              // Se não houver usuário, usar dados mockados para as cobranças
+              console.log('Dashboard: Usuário não disponível, usando dados mockados para cobranças');
+              try {
+                const mockCharges = await mockGetPendingChargesByMemberId();
+                const chargeData = mockCharges.map(charge => ({
+                  ...charge,
+                  status: convertChargeStatus(charge.status)
+                })) as Charge[];
+                setPendingCharges(chargeData);
+              } catch (e) {
+                console.error('Dashboard: Erro ao carregar cobranças mockadas:', e);
+                setPendingCharges([]);
+              }
+            }
+            
+            // Se chegou até aqui, os dados foram carregados com sucesso
+            console.log('Dashboard: Dados carregados com sucesso');
+            return true;
+          } catch (loadError) {
+            console.error(`Dashboard: Erro na tentativa ${retryCount + 1} de carregar dados:`, loadError);
+            retryCount++;
+            
+            if (retryCount < maxRetries) {
+              console.log(`Dashboard: Tentando novamente (${retryCount}/${maxRetries})...`);
+              return attemptDataLoad();
+            } else {
+              console.error('Dashboard: Número máximo de tentativas excedido');
+              throw loadError;
+            }
           }
-        } else {
-          // Se não houver usuário, usar dados mockados para as cobranças
-          console.log('Usuário não disponível, usando dados mockados para cobranças');
-          try {
-            const mockCharges = await mockGetPendingChargesByMemberId();
-            const chargeData = mockCharges.map(charge => ({
-              ...charge,
-              status: convertChargeStatus(charge.status)
-            }));
-            setPendingCharges(chargeData);
-          } catch (e) {
-            console.error('Erro ao carregar cobranças mockadas:', e);
-            setPendingCharges([]);
-          }
-        }
+        };
         
-        console.log('Dashboard - Dados carregados com sucesso');
+        // Iniciar tentativa de carregamento
+        await attemptDataLoad();
+        
+        // Se chegou aqui, os dados foram carregados com sucesso
+        console.log('Dashboard: Todos os dados carregados com sucesso');
       } catch (error: any) {
-        console.error('Erro ao buscar dados para o dashboard:', error);
+        console.error('Dashboard: Erro ao buscar dados para o dashboard:', error);
         setError(`Erro ao carregar os dados: ${error.message || 'Erro desconhecido'}`);
         
         // Carregar dados mockados em caso de erro para garantir uma experiência mínima
+        console.log('Dashboard: Carregando dados mockados como fallback');
         try {
           const mockEvents = await mockGetFutureEvents();
           setEvents(mockEvents as Event[]);
@@ -489,8 +587,10 @@ export default function Dashboard() {
             ...charge,
             status: convertChargeStatus(charge.status)
           })) as Charge[]);
+          
+          console.log('Dashboard: Dados mockados carregados com sucesso');
         } catch (e) {
-          console.error('Erro ao carregar dados mockados:', e);
+          console.error('Dashboard: Erro ao carregar dados mockados:', e);
         }
       } finally {
         setLoading(false);
@@ -504,14 +604,26 @@ export default function Dashboard() {
   // Mostrar uma mensagem de erro se a verificação de sessão e a autenticação falharem
   if (!authLoading && !user && sessionChecked) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-center">
-          <div className="bg-yellow-50 p-4 rounded-md mb-4">
-            <p className="text-yellow-700">Sessão não encontrada. Por favor, faça login novamente.</p>
+      <div className="flex items-center justify-center min-h-screen p-4">
+        <div className="text-center max-w-md w-full bg-white rounded-lg shadow-md p-6">
+          <div className="w-16 h-16 bg-yellow-100 text-yellow-600 rounded-full flex items-center justify-center mx-auto mb-4">
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
           </div>
-          <Link href="/login" className="text-blue-600 hover:underline">
-            Ir para a página de login
-          </Link>
+          <h2 className="text-xl font-semibold mb-2">Sessão não encontrada</h2>
+          <p className="text-gray-600 mb-4">Não foi possível verificar sua sessão. Por favor, faça login novamente para acessar o dashboard.</p>
+          <div className="flex flex-col space-y-2">
+            <Link href="/login" className="bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded transition-colors">
+              Ir para a página de login
+            </Link>
+            <button 
+              onClick={() => window.location.reload()} 
+              className="bg-gray-200 hover:bg-gray-300 text-gray-800 font-medium py-2 px-4 rounded transition-colors"
+            >
+              Tentar novamente
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -520,12 +632,15 @@ export default function Dashboard() {
   // Mostrar indicador de carregamento com timeout para evitar carregamento infinito
   if (authLoading || loading || !sessionChecked) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-center">
-          <div className="w-12 h-12 border-t-4 border-blue-500 border-solid rounded-full animate-spin mx-auto"></div>
-          <p className="mt-4 text-gray-600">
+      <div className="flex items-center justify-center min-h-screen p-4">
+        <div className="text-center max-w-md w-full bg-white rounded-lg shadow-md p-6">
+          <div className="w-12 h-12 border-t-4 border-blue-500 border-solid rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-lg font-medium text-gray-800 mb-2">
             {!sessionChecked ? 'Verificando sessão...' : 
              authLoading ? 'Verificando autenticação...' : 'Carregando dados...'}
+          </p>
+          <p className="text-sm text-gray-600 mb-6">
+            Isso pode levar alguns instantes. Aguarde, por favor.
           </p>
           
           {/* Mostrar informações de depuração e opções em caso de timeout */}
@@ -544,18 +659,31 @@ export default function Dashboard() {
               <div className="flex flex-col space-y-2">
                 <button 
                   onClick={() => window.location.reload()} 
-                  className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded"
+                  className="bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded transition-colors"
                 >
                   Tentar novamente
                 </button>
                 <button 
                   onClick={() => {
-                    console.log('Redirecionando para login manualmente');
+                    console.log('Dashboard: Redirecionando para login manualmente');
                     window.location.href = '/login';
                   }} 
-                  className="bg-gray-500 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded"
+                  className="bg-gray-200 hover:bg-gray-300 text-gray-800 font-medium py-2 px-4 rounded transition-colors"
                 >
                   Voltar para login
+                </button>
+                <button 
+                  onClick={() => {
+                    console.log('Dashboard: Limpando dados de autenticação');
+                    // Importar dinamicamente para evitar problemas de SSR
+                    import('@/lib/auth').then(({ clearAuthData }) => {
+                      clearAuthData();
+                      window.location.href = '/login?cleared=true';
+                    });
+                  }} 
+                  className="bg-red-100 hover:bg-red-200 text-red-800 font-medium py-2 px-4 rounded transition-colors"
+                >
+                  Limpar dados e voltar para login
                 </button>
               </div>
             </div>
@@ -576,6 +704,54 @@ export default function Dashboard() {
               }} />
             </div>
           )}
+        </div>
+      </div>
+    );
+  }
+
+  // Se há erro no carregamento de dados, mostrar mensagem de erro
+  if (error) {
+    return (
+      <div className="max-w-7xl mx-auto p-6">
+        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded relative">
+          <h2 className="font-bold mb-2">Erro ao carregar dados</h2>
+          <p className="mb-4">{error}</p>
+          <div className="flex space-x-2">
+            <button 
+              onClick={() => window.location.reload()} 
+              className="bg-red-700 text-white px-4 py-2 rounded hover:bg-red-800 transition-colors"
+            >
+              Tentar novamente
+            </button>
+            <button 
+              onClick={async () => {
+                // Forçar carregamento de dados mockados
+                setLoading(true);
+                try {
+                  const mockEvents = await mockGetFutureEvents();
+                  setEvents(mockEvents as Event[]);
+                  
+                  const mockMembers = await mockGetAllMembers();
+                  setMembers(mockMembers as Member[]);
+                  
+                  const mockCharges = await mockGetPendingChargesByMemberId();
+                  setPendingCharges(mockCharges.map(charge => ({
+                    ...charge,
+                    status: convertChargeStatus(charge.status)
+                  })) as Charge[]);
+                  
+                  setError(null);
+                } catch (e) {
+                  console.error('Dashboard: Erro ao carregar dados mockados:', e);
+                } finally {
+                  setLoading(false);
+                }
+              }} 
+              className="bg-gray-200 text-gray-800 px-4 py-2 rounded hover:bg-gray-300 transition-colors"
+            >
+              Usar dados de exemplo
+            </button>
+          </div>
         </div>
       </div>
     );
