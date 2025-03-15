@@ -63,7 +63,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         .select('*')
         .eq('user_id', user.id)
         .single();
-      
+        console.log('Finalizou query no supabase');
+
       if (memberError && memberError.code !== 'PGRST116') {
         console.error('AuthContext: Erro ao verificar membro existente:', memberError);
         return null;
