@@ -31,12 +31,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   
   // Criar o cliente Supabase usando a forma recomendada para componentes
+  // Correção: Usar a forma correta para Next.js 15
   const supabase = createClientComponentClient();
+
+  // Função para verificar a sessão atual
+  const getSession = async () => {
+    try {
+      console.log('AuthContext: Verificando sessão');
+      const { data, error } = await supabase.auth.getSession();
+      
+      if (error) {
+        console.error('AuthContext: Erro ao obter sessão:', error.message);
+        throw error;
+      }
+      
+      return data.session;
+    } catch (err: any) {
+      console.error('AuthContext: Erro ao verificar sessão:', err.message);
+      return null;
+    }
+  };
 
   // Função para verificar se o usuário tem um registro de membro e criar se não tiver
   const checkAndCreateMember = async (userId: string, userData: User) => {
     try {
-      console.log('Verificando registro de membro para o usuário:', userId);
+      console.log('AuthContext: Verificando registro de membro para o usuário:', userId);
       
       // Verificar se o usuário já possui um registro de membro
       const { data: existingMember, error: checkError } = await supabase
@@ -47,47 +66,50 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       
       // Se já existe um membro, não fazemos nada
       if (existingMember) {
-        console.log('Usuário já possui registro de membro:', existingMember.type);
+        console.log('AuthContext: Usuário já possui registro de membro:', existingMember.type);
         return;
       }
       
-      // Se não existe (erro PGRST116 - No Results) ou outro erro, verificamos
-      if (checkError && checkError.code !== 'PGRST116') {
-        console.error('Erro ao verificar registro de membro:', checkError);
-        return;
+      if (checkError && checkError.code !== 'PGRST116') { // PGRST116 = not found
+        console.error('AuthContext: Erro ao verificar membro existente:', checkError);
+        throw checkError;
       }
       
-      // Criar um novo registro de membro do tipo "inativo"
-      console.log('Criando registro de membro inativo para novo usuário');
+      // Se não existe, criar um novo registro de membro com status pendente
+      console.log('AuthContext: Criando novo registro de membro para o usuário');
       
-      const fullName = userData.user_metadata?.full_name || 
-                      userData.user_metadata?.name || 
-                      userData.email?.split('@')[0] || 
-                      'Novo Membro';
+      // Extrair informações do perfil do usuário
+      const { email, user_metadata } = userData;
+      const name = user_metadata?.name || email?.split('@')[0] || 'Usuário';
       
-      const { error: insertError } = await supabase
+      // Criar o registro de membro
+      const { data: newMember, error: createError } = await supabase
         .from('members')
-        .insert([{
-          user_id: userId,
-          nickname: fullName,
-          status: 'calouro', // Status inicial
-          type: 'inativo', // Tipo inicial (aguardando aprovação)
-          team_role: 'rua',
-          financial_status: 'ok',
-          shirt_size: 'M',
-          gender: 'prefiro_nao_responder',
-          pending_amount: 0
-        }]);
-        
-      if (insertError) {
-        console.error('Erro ao criar registro de membro inativo:', insertError);
-      } else {
-        console.log('Registro de membro inativo criado com sucesso');
-        // Atualizar a página para aplicar as restrições de acesso
-        router.refresh();
+        .insert([
+          { 
+            user_id: userId,
+            nickname: name,
+            status: 'pendente',
+            type: 'pendente',
+            team_role: 'pendente',
+            financial_status: 'pendente'
+          }
+        ])
+        .select()
+        .single();
+      
+      if (createError) {
+        console.error('AuthContext: Erro ao criar membro:', createError);
+        throw createError;
       }
-    } catch (error) {
-      console.error('Erro ao verificar/criar membro:', error);
+      
+      console.log('AuthContext: Novo membro criado com sucesso:', newMember);
+      
+      // Sincronizar informações adicionais do perfil
+      await syncUserProfileAfterLogin(userId, userData);
+      
+    } catch (err) {
+      console.error('AuthContext: Erro ao verificar/criar membro:', err);
     }
   };
 
@@ -117,121 +139,104 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     checkCallback();
   }, [supabase]);
 
+  // Efeito para verificar a sessão do usuário ao carregar o componente
   useEffect(() => {
-    // Função para buscar a sessão do usuário
-    const getSession = async () => {
+    const checkUser = async () => {
       try {
-        console.log('Verificando sessão...');
         setIsLoading(true);
+        console.log('AuthContext: Verificando usuário atual');
         
-        const { data: { session }, error } = await supabase.auth.getSession();
+        // Obter a sessão atual
+        const session = await getSession();
         
-        if (error) {
-          throw error;
-        }
-
-        if (session) {
-          console.log('Sessão encontrada');
-          const { data: userData, error: userError } = await supabase.auth.getUser();
-          
-          if (userError) {
-            throw userError;
-          }
-          
-          console.log('Usuário encontrado:', !!userData.user);
-          const currentUser = userData.user as unknown as User;
-          setUser(currentUser);
-          
-          // Sincronizar perfil do usuário quando a sessão é carregada inicialmente
-          console.log('Sincronizando perfil do usuário durante inicialização da sessão');
-          await syncUserProfileAfterLogin(supabase, currentUser);
-          
-          // Verificar e criar registro de membro se necessário
-          if (currentUser.id) {
-            await checkAndCreateMember(currentUser.id, currentUser);
-          }
-        } else {
-          console.log('Nenhuma sessão encontrada');
+        if (!session) {
+          console.log('AuthContext: Nenhuma sessão encontrada');
           setUser(null);
+          setIsLoading(false);
+          return;
         }
-      } catch (error: any) {
-        console.error('Erro ao buscar sessão:', error.message);
-        setError(error.message);
+        
+        console.log('AuthContext: Sessão encontrada, obtendo dados do usuário');
+        
+        // Obter dados do usuário
+        const { data: { user: authUser }, error: userError } = await supabase.auth.getUser();
+        
+        if (userError || !authUser) {
+          console.error('AuthContext: Erro ao obter usuário:', userError?.message);
+          setUser(null);
+          setIsLoading(false);
+          return;
+        }
+        
+        console.log('AuthContext: Usuário autenticado:', authUser.email);
+        
+        // Verificar e criar registro de membro se necessário
+        await checkAndCreateMember(authUser.id, authUser);
+        
+        // Atualizar o estado com os dados do usuário
+        setUser(authUser);
+      } catch (err: any) {
+        console.error('AuthContext: Erro ao verificar usuário:', err.message);
+        setError(err.message);
+        setUser(null);
       } finally {
         setIsLoading(false);
       }
     };
-
-    // Buscar sessão inicial
-    getSession();
-
-    // Configurar listener para mudanças no estado de autenticação
-    const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
-      console.log('Evento de autenticação:', event);
-      
-      if (session) {
-        const { data: userData } = await supabase.auth.getUser();
-        console.log('Usuário atualizado após evento de autenticação');
-        const currentUser = userData.user as unknown as User;
-        setUser(currentUser);
+    
+    // Verificar o usuário ao montar o componente
+    checkUser();
+    
+    // Configurar listener para mudanças de autenticação
+    const { data: authListener } = supabase.auth.onAuthStateChange(
+      async (event, session) => {
+        console.log('AuthContext: Evento de autenticação detectado:', event);
         
-        // Processar evento de login
-        if (event === 'SIGNED_IN' && currentUser.id) {
-          // Garantir que temos os dados mais recentes do usuário
-          const { data: refreshedUserData, error: refreshError } = await supabase.auth.getUser();
-          if (!refreshError && refreshedUserData && refreshedUserData.user) {
-            console.log('Obtendo dados mais recentes do usuário após login');
-            const refreshedUser = refreshedUserData.user as unknown as User;
-            setUser(refreshedUser);
-            
-            // Sincronizar perfil com dados atualizados
-            await syncUserProfileAfterLogin(supabase, refreshedUser);
-          } else {
-            // Usar os dados atuais se não conseguir obter dados atualizados
-            console.warn('Não foi possível obter dados atualizados. Usando dados atuais.');
-            await syncUserProfileAfterLogin(supabase, currentUser);
-          }
+        if (event === 'SIGNED_IN' && session?.user) {
+          console.log('AuthContext: Usuário fez login, atualizando estado');
           
           // Verificar e criar registro de membro se necessário
-          await checkAndCreateMember(currentUser.id, currentUser);
+          await checkAndCreateMember(session.user.id, session.user);
           
-          console.log('Usuário conectado, verificando tipo para redirecionamento');
+          // Atualizar o estado com os dados do usuário
+          setUser(session.user);
+          setIsLoading(false);
           
-          // Verificar tipo de membro e redirecionar
-          await checkMemberTypeAndRedirect(currentUser.id);
-        }
-      } else {
-        console.log('Usuário desconectado após evento de autenticação');
-        setUser(null);
-        
-        // Ações baseadas no evento
-        if (event === 'SIGNED_OUT') {
-          console.log('Usuário desconectado, redirecionando para login');
-          router.refresh();
-          router.push('/login');
+          // Verificar tipo de membro para redirecionar adequadamente
+          await checkMemberTypeAndRedirect(session.user.id);
+        } else if (event === 'SIGNED_OUT') {
+          console.log('AuthContext: Usuário fez logout, limpando estado');
+          setUser(null);
+          setIsLoading(false);
+        } else if (event === 'TOKEN_REFRESHED' && session) {
+          console.log('AuthContext: Token atualizado, atualizando estado');
+          setUser(session.user);
+          setIsLoading(false);
         }
       }
-      
-      setIsLoading(false);
-    });
-
-    // Limpar listener ao desmontar o componente
+    );
+    
+    // Limpar o listener ao desmontar o componente
     return () => {
-      console.log('Limpando listener de autenticação');
       authListener.subscription.unsubscribe();
     };
-  }, [router, supabase]);
+  }, [router]);
 
   const signInWithGoogle = async () => {
     try {
-      console.log('Iniciando login com Google...');
+      console.log('AuthContext: Iniciando login com Google');
       setIsLoading(true);
       setError(null);
       
-      const { error } = await supabase.auth.signInWithOAuth({
+      // Configurar URL de redirecionamento
+      const redirectTo = `${window.location.origin}/auth/callback`;
+      console.log('AuthContext: URL de redirecionamento:', redirectTo);
+      
+      // Iniciar fluxo de login com Google
+      const { data, error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          redirectTo: `${window.location.origin}/auth/callback`,
+          redirectTo,
           queryParams: {
             access_type: 'offline',
             prompt: 'consent',
@@ -240,13 +245,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
       
       if (error) {
+        console.error('AuthContext: Erro ao iniciar login com Google:', error.message);
         throw error;
       }
       
-      console.log('Redirecionando para autenticação Google');
-      // Não vamos definir isLoading como false aqui, pois estamos redirecionando para o Google
+      console.log('AuthContext: Login com Google iniciado, redirecionando...');
+      
+      // Não precisamos definir o usuário aqui, pois o listener de autenticação
+      // irá capturar o evento SIGNED_IN e atualizar o estado
     } catch (error: any) {
-      console.error('Erro ao fazer login com Google:', error.message);
+      console.error('AuthContext: Erro durante processo de login:', error.message);
       setError(error.message);
       setIsLoading(false);
     }
@@ -254,7 +262,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signOut = async () => {
     try {
-      console.log('Iniciando processo de logout...');
+      console.log('AuthContext: Iniciando processo de logout...');
       setIsLoading(true);
       setError(null);
       
@@ -267,7 +275,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         throw error;
       }
       
-      console.log('Logout bem-sucedido. Redirecionando para página inicial...');
+      console.log('AuthContext: Logout bem-sucedido. Redirecionando para página inicial...');
       
       // Resetar o estado da aplicação
       setUser(null);
@@ -282,7 +290,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         window.location.href = '/?logout=true';
       }, 300);
     } catch (error: any) {
-      console.error('Erro durante o processo de logout:', error.message);
+      console.error('AuthContext: Erro durante o processo de logout:', error.message);
       setError(`Falha ao fazer logout: ${error.message}`);
       setIsLoading(false);
       
@@ -293,10 +301,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  // Função para verificar o tipo de membro e redirecionar adequadamente
+  // Verificar tipo de membro para redirecionar adequadamente
   const checkMemberTypeAndRedirect = async (userId: string) => {
     try {
-      console.log('Verificando tipo de membro para redirecionamento:', userId);
+      console.log('AuthContext: Verificando tipo de membro para redirecionamento:', userId);
       
       // Tentativa #1: Verificar diretamente no Supabase
       let member = null;
@@ -308,13 +316,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           .single();
         
         if (error) {
-          console.error('Erro ao verificar tipo de membro para redirecionamento:', error);
+          console.error('AuthContext: Erro ao verificar tipo de membro para redirecionamento:', error);
           throw error;
         }
         
         member = data;
       } catch (supabaseError) {
-        console.error('Falha ao buscar membro via Supabase, tentando API:', supabaseError);
+        console.error('AuthContext: Falha ao buscar membro via Supabase, tentando API:', supabaseError);
         
         // Tentativa #2: Verificar via API
         try {
@@ -323,22 +331,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             const authData = await apiResponse.json();
             if (authData.authenticated && authData.user && authData.user.role) {
               member = { type: authData.user.role };
-              console.log('Obtido tipo de membro via API:', member.type);
+              console.log('AuthContext: Obtido tipo de membro via API:', member.type);
             }
           }
         } catch (apiError) {
-          console.error('Erro ao verificar autenticação via API:', apiError);
+          console.error('AuthContext: Erro ao verificar autenticação via API:', apiError);
         }
       }
       
       if (!member) {
-        console.error('Não foi possível determinar o tipo de membro após múltiplas tentativas');
+        console.error('AuthContext: Não foi possível determinar o tipo de membro após múltiplas tentativas');
         // Redirecionar para página de aprovação pendente como fallback
         router.push('/pending-approval');
         return;
       }
       
-      console.log('Redirecionando baseado no tipo de membro:', member?.type);
+      console.log('AuthContext: Redirecionando baseado no tipo de membro:', member?.type);
       
       // Função auxiliar para verificar o tipo independente de maiúsculas/minúsculas
       const isMemberType = (type: string, value: string) => {
@@ -350,13 +358,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         router.push('/profile');
       } else if (member && isMemberType(member.type, 'admin')) {
         router.push('/dashboard');
+      } else if (member && isMemberType(member.type, 'pendente')) {
+        router.push('/pending-approval');
       } else {
         // Inativo ou outro tipo vai para dashboard e o middleware
         // vai redirecionar conforme necessário
         router.push('/dashboard');
       }
     } catch (err) {
-      console.error('Erro ao verificar tipo de membro:', err);
+      console.error('AuthContext: Erro ao verificar tipo de membro:', err);
       // Em caso de erro, tentar ir para o dashboard e deixar o middleware decidir
       router.push('/dashboard');
     }
