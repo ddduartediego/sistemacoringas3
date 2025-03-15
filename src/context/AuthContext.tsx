@@ -52,64 +52,45 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  // Função para verificar se o usuário tem um registro de membro e criar se não tiver
-  const checkAndCreateMember = async (userId: string, userData: User) => {
+  // Função para verificar e criar membro se necessário
+  const checkAndCreateMember = async (user: User) => {
     try {
-      console.log('AuthContext: Verificando registro de membro para o usuário:', userId);
+      console.log('AuthContext: Verificando registro de membro para o usuário:', user.id);
       
-      // Verificar se o usuário já possui um registro de membro
-      const { data: existingMember, error: checkError } = await supabase
+      // Verificar se o usuário já tem um registro na tabela members
+      const { data: existingMember, error: memberError } = await supabase
         .from('members')
-        .select('id, type')
-        .eq('user_id', userId)
+        .select('*')
+        .eq('user_id', user.id)
         .single();
       
-      // Se já existe um membro, não fazemos nada
+      if (memberError && memberError.code !== 'PGRST116') {
+        console.error('AuthContext: Erro ao verificar membro existente:', memberError);
+        return null;
+      }
+      
+      // Se o membro já existe, retornar os dados
       if (existingMember) {
         console.log('AuthContext: Usuário já possui registro de membro:', existingMember.type);
-        return;
+        return existingMember;
       }
       
-      if (checkError && checkError.code !== 'PGRST116') { // PGRST116 = not found
-        console.error('AuthContext: Erro ao verificar membro existente:', checkError);
-        throw checkError;
+      // Se não existe, criar um novo registro usando a função auxiliar
+      console.log('AuthContext: Usuário não possui registro de membro, criando...');
+      const userEmail = user.email || '';
+      const userName = user.user_metadata?.name || userEmail.split('@')[0];
+      
+      try {
+        const newMember = await syncUserProfileAfterLogin(user.id, userEmail, userName);
+        console.log('AuthContext: Novo membro criado com sucesso');
+        return newMember;
+      } catch (syncError) {
+        console.error('AuthContext: Erro ao criar membro:', syncError);
+        return null;
       }
-      
-      // Se não existe, criar um novo registro de membro com status pendente
-      console.log('AuthContext: Criando novo registro de membro para o usuário');
-      
-      // Extrair informações do perfil do usuário
-      const { email, user_metadata } = userData;
-      const name = user_metadata?.name || email?.split('@')[0] || 'Usuário';
-      
-      // Criar o registro de membro
-      const { data: newMember, error: createError } = await supabase
-        .from('members')
-        .insert([
-          { 
-            user_id: userId,
-            nickname: name,
-            status: 'pendente',
-            type: 'pendente',
-            team_role: 'pendente',
-            financial_status: 'pendente'
-          }
-        ])
-        .select()
-        .single();
-      
-      if (createError) {
-        console.error('AuthContext: Erro ao criar membro:', createError);
-        throw createError;
-      }
-      
-      console.log('AuthContext: Novo membro criado com sucesso:', newMember);
-      
-      // Sincronizar informações adicionais do perfil
-      await syncUserProfileAfterLogin(userId, userData);
-      
-    } catch (err) {
-      console.error('AuthContext: Erro ao verificar/criar membro:', err);
+    } catch (error) {
+      console.error('AuthContext: Erro ao verificar/criar membro:', error);
+      return null;
     }
   };
 
@@ -171,7 +152,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         console.log('AuthContext: Usuário autenticado:', authUser.email);
         
         // Verificar e criar registro de membro se necessário
-        await checkAndCreateMember(authUser.id, authUser);
+        await checkAndCreateMember(authUser);
         
         // Atualizar o estado com os dados do usuário
         setUser(authUser);
@@ -196,7 +177,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           console.log('AuthContext: Usuário fez login, atualizando estado');
           
           // Verificar e criar registro de membro se necessário
-          await checkAndCreateMember(session.user.id, session.user);
+          await checkAndCreateMember(session.user);
           
           // Atualizar o estado com os dados do usuário
           setUser(session.user);
@@ -260,44 +241,58 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  // Função de logout com timeout para evitar travamento
   const signOut = async () => {
+    console.log('AuthContext: Iniciando processo de logout...');
+    
+    // Adicionar um timeout para garantir que o processo não fique travado
+    const timeoutPromise = new Promise<void>((_, reject) => {
+      setTimeout(() => {
+        reject(new Error('Timeout ao fazer logout'));
+      }, 5000); // 5 segundos de timeout
+    });
+    
     try {
-      console.log('AuthContext: Iniciando processo de logout...');
-      setIsLoading(true);
-      setError(null);
+      // Tentar fazer logout normalmente
+      const logoutPromise = supabase.auth.signOut();
       
-      // Chamada para encerrar a sessão no Supabase
-      const { error } = await supabase.auth.signOut({
-        scope: 'local' // Especificando 'local' para limpar apenas o armazenamento local, não todas as sessões do usuário em outros dispositivos
-      });
+      // Usar Promise.race para aplicar o timeout
+      await Promise.race([logoutPromise, timeoutPromise]);
       
-      if (error) {
-        throw error;
+      console.log('AuthContext: Logout realizado com sucesso');
+      
+      // Limpar cookies manualmente para garantir
+      if (typeof document !== 'undefined') {
+        document.cookie = 'supabase-auth-token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
+        document.cookie = 'sb-refresh-token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
+        document.cookie = 'sb-access-token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
+        localStorage.removeItem('supabase.auth.token');
       }
       
-      console.log('AuthContext: Logout bem-sucedido. Redirecionando para página inicial...');
+      // Redirecionar para a página de login
+      router.push('/login?signout=true');
       
-      // Resetar o estado da aplicação
-      setUser(null);
-      
-      // Adicionar um pequeno atraso antes do redirecionamento para garantir que tudo seja limpo
+      // Forçar um reload da página após um pequeno delay
       setTimeout(() => {
-        // Atualizar a página para limpar quaisquer dados de estado que possam estar em memória
-        router.refresh();
-        
-        // Redirecionar para a página principal com parâmetro de logout
-        // Isso permite que o middleware saiba que este é um redirecionamento de logout
-        window.location.href = '/?logout=true';
-      }, 300);
-    } catch (error: any) {
-      console.error('AuthContext: Erro durante o processo de logout:', error.message);
-      setError(`Falha ao fazer logout: ${error.message}`);
-      setIsLoading(false);
+        if (typeof window !== 'undefined') {
+          window.location.href = '/login?signout=true';
+        }
+      }, 500);
+    } catch (error) {
+      console.error('AuthContext: Erro durante logout:', error);
       
-      // Mesmo em caso de erro, tentar redirecionar o usuário
-      setTimeout(() => {
-        window.location.href = '/?logout=true';
-      }, 2000);
+      // Mesmo com erro, limpar cookies e localStorage
+      if (typeof document !== 'undefined') {
+        document.cookie = 'supabase-auth-token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
+        document.cookie = 'sb-refresh-token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
+        document.cookie = 'sb-access-token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
+        localStorage.removeItem('supabase.auth.token');
+      }
+      
+      // Forçar redirecionamento mesmo em caso de erro
+      if (typeof window !== 'undefined') {
+        window.location.href = '/login?error=Erro+ao+fazer+logout';
+      }
     }
   };
 

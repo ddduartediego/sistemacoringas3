@@ -113,75 +113,127 @@ export const createOrUpdateUserProfile = async (user: any) => {
 
 /**
  * Sincroniza o perfil do usuário após o login
- * Atualiza informações adicionais do usuário na tabela de perfis
+ * Verifica se o usuário já tem um registro na tabela members
+ * Se não tiver, cria um novo registro
  */
-export async function syncUserProfileAfterLogin(userId: string, userData: User) {
+export const syncUserProfileAfterLogin = async (userId: string, userEmail: string, userName: string) => {
   try {
-    console.log('Auth: Sincronizando perfil do usuário após login:', userId);
+    console.log('Sincronizando perfil do usuário após login:', userId);
     const supabase = createClientComponentClient();
     
-    // Extrair informações do perfil do usuário
-    const { email, user_metadata } = userData;
-    const name = user_metadata?.name || email?.split('@')[0] || 'Usuário';
-    const avatarUrl = user_metadata?.avatar_url || null;
-    
-    // Verificar se já existe um perfil
-    const { data: existingProfile, error: profileError } = await supabase
-      .from('profiles')
+    // Verificar se o usuário já tem um registro na tabela members
+    const { data: existingMember, error: memberError } = await supabase
+      .from('members')
       .select('*')
       .eq('user_id', userId)
       .single();
     
-    if (profileError && profileError.code !== 'PGRST116') { // PGRST116 = not found
-      console.error('Auth: Erro ao verificar perfil existente:', profileError);
-      return;
+    if (memberError && memberError.code !== 'PGRST116') {
+      console.error('Erro ao verificar membro existente:', memberError);
+      throw memberError;
     }
     
-    // Se não existe perfil, criar um novo
-    if (!existingProfile) {
-      console.log('Auth: Criando novo perfil para o usuário');
-      
-      const { error: insertError } = await supabase
-        .from('profiles')
-        .insert([
-          {
-            user_id: userId,
-            full_name: name,
-            avatar_url: avatarUrl,
-            email: email,
-            updated_at: new Date().toISOString()
-          }
-        ]);
-      
-      if (insertError) {
-        console.error('Auth: Erro ao criar perfil:', insertError);
-      } else {
-        console.log('Auth: Perfil criado com sucesso');
-      }
-    } else {
-      // Se já existe, atualizar com as informações mais recentes
-      console.log('Auth: Atualizando perfil existente');
-      
-      const { error: updateError } = await supabase
-        .from('profiles')
-        .update({
-          full_name: name,
-          avatar_url: avatarUrl,
-          email: email,
-          updated_at: new Date().toISOString()
-        })
-        .eq('user_id', userId);
-      
-      if (updateError) {
-        console.error('Auth: Erro ao atualizar perfil:', updateError);
-      } else {
-        console.log('Auth: Perfil atualizado com sucesso');
+    // Se o membro já existe, não precisamos fazer nada
+    if (existingMember) {
+      console.log('Membro já existe, não é necessário criar um novo registro');
+      return existingMember;
+    }
+    
+    // Se não existe, criar um novo registro
+    console.log('Criando novo registro de membro para o usuário:', userId);
+    
+    // Extrair o nome do usuário do email ou dos metadados
+    const nickname = userName || userEmail.split('@')[0];
+    
+    const { data: newMember, error: insertError } = await supabase
+      .from('members')
+      .insert([
+        { 
+          user_id: userId,
+          nickname,
+          email: userEmail,
+          status: 'pendente', // Status inicial é pendente até aprovação
+          type: 'member',     // Tipo padrão é membro comum
+          team_role: 'indefinido',
+          financial_status: 'ok',
+          pending_amount: 0
+        }
+      ])
+      .select()
+      .single();
+    
+    if (insertError) {
+      console.error('Erro ao criar novo membro:', insertError);
+      throw insertError;
+    }
+    
+    console.log('Novo membro criado com sucesso:', newMember);
+    return newMember;
+  } catch (error) {
+    console.error('Erro ao sincronizar perfil do usuário:', error);
+    throw error;
+  }
+};
+
+/**
+ * Limpa todos os dados de autenticação do navegador
+ * Útil para resolver problemas de autenticação
+ */
+export const clearAuthData = () => {
+  console.log('Limpando dados de autenticação...');
+  
+  try {
+    // Limpar cookies relacionados ao Supabase
+    const cookiesToClear = [
+      'supabase-auth-token',
+      'sb-refresh-token',
+      'sb-access-token',
+      'sb-auth-token',
+      '__supabase_auth_token',
+      '__supabase_refresh_token'
+    ];
+    
+    cookiesToClear.forEach(cookieName => {
+      // Limpar para diferentes paths
+      document.cookie = `${cookieName}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;`;
+      document.cookie = `${cookieName}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/login;`;
+      document.cookie = `${cookieName}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/dashboard;`;
+      document.cookie = `${cookieName}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/auth;`;
+    });
+    
+    // Limpar localStorage
+    const keysToRemove = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && (key.includes('supabase') || key.includes('sb-'))) {
+        keysToRemove.push(key);
       }
     }
+    
+    keysToRemove.forEach(key => {
+      localStorage.removeItem(key);
+    });
+    
+    // Limpar sessionStorage
+    const sessionKeysToRemove = [];
+    for (let i = 0; i < sessionStorage.length; i++) {
+      const key = sessionStorage.key(i);
+      if (key && (key.includes('supabase') || key.includes('sb-'))) {
+        sessionKeysToRemove.push(key);
+      }
+    }
+    
+    sessionKeysToRemove.forEach(key => {
+      sessionStorage.removeItem(key);
+    });
+    
+    console.log('Dados de autenticação limpos com sucesso');
+    return true;
   } catch (error) {
-    console.error('Auth: Erro ao sincronizar perfil:', error);
+    console.error('Erro ao limpar dados de autenticação:', error);
+    return false;
   }
-}
+};
 
 /**
  * Verifica a sessão atual do usuário
@@ -258,36 +310,4 @@ export async function isAdmin(userId: string) {
 export async function isApprovedMember(userId: string) {
   const memberType = await getMemberType(userId);
   return memberType?.toLowerCase() === 'member' || memberType?.toLowerCase() === 'admin';
-}
-
-/**
- * Limpa os cookies e o armazenamento local relacionados à autenticação
- * Útil para resolver problemas de autenticação
- */
-export function clearAuthData() {
-  try {
-    console.log('Auth: Limpando dados de autenticação');
-    
-    // Limpar localStorage
-    const keys = Object.keys(localStorage);
-    for (const key of keys) {
-      if (key.includes('supabase') || key.includes('sb-')) {
-        localStorage.removeItem(key);
-      }
-    }
-    
-    // Limpar cookies (método simples)
-    document.cookie.split(';').forEach(cookie => {
-      const [name] = cookie.trim().split('=');
-      if (name.includes('supabase') || name.includes('sb-')) {
-        document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;`;
-      }
-    });
-    
-    console.log('Auth: Dados de autenticação limpos com sucesso');
-    return true;
-  } catch (error) {
-    console.error('Auth: Erro ao limpar dados de autenticação:', error);
-    return false;
-  }
 } 

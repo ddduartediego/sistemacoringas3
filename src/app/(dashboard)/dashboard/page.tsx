@@ -340,14 +340,32 @@ export default function Dashboard() {
         }
         
         // Verificar se estamos em produção (Vercel)
-        const isProduction = typeof window !== 'undefined' && window.location.hostname.includes('vercel.app');
+        const isProduction = typeof window !== 'undefined' && 
+          (window.location.hostname.includes('vercel.app') || 
+           window.location.hostname !== 'localhost');
+        
         console.log('Dashboard: Ambiente detectado:', isProduction ? 'Produção' : 'Desenvolvimento');
         
         // Em produção, tentar uma abordagem alternativa para verificar a autenticação
         if (isProduction) {
           try {
             console.log('Dashboard: Tentando verificação alternativa via API em produção');
-            const response = await fetch('/api/auth/check');
+            
+            // Adicionar timeout para a chamada de API
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 3000);
+            
+            const response = await fetch('/api/auth/check', {
+              signal: controller.signal,
+              cache: 'no-store',
+              headers: {
+                'Cache-Control': 'no-cache',
+                'Pragma': 'no-cache'
+              }
+            });
+            
+            clearTimeout(timeoutId);
+            
             if (response.ok) {
               const authData = await response.json();
               console.log('Dashboard: Resposta da API de verificação:', authData);
@@ -365,8 +383,15 @@ export default function Dashboard() {
             } else {
               console.error('Dashboard: Erro na verificação via API:', response.status);
             }
-          } catch (apiError) {
+          } catch (apiError: any) {
             console.error('Dashboard: Erro ao chamar API de verificação:', apiError);
+            
+            // Se o erro for de timeout, continuar mesmo assim
+            if (apiError?.name === 'AbortError') {
+              console.log('Dashboard: Timeout na verificação via API, continuando mesmo assim');
+              setSessionChecked(true);
+              return;
+            }
           }
         }
         
@@ -409,7 +434,7 @@ export default function Dashboard() {
         console.log('Dashboard: Forçando sessão como verificada após timeout');
         setSessionChecked(true);
       }
-    }, 10000);
+    }, 5000); // Reduzido de 10s para 5s
     
     checkSession();
     
