@@ -57,14 +57,59 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       console.log('AuthContext: Verificando registro de membro para o usuário:', user.id);
       
-      // Verificar se o usuário já tem um registro na tabela members
-      const { data: existingMember, error: memberError } = await supabase
-        .from('members')
-        .select('*')
-        .eq('user_id', user.id)
-        .single();
-        console.log('Finalizou query no supabase');
-
+      // Adicionar timeout para a consulta ao Supabase
+      const timeoutPromise = new Promise<{data: any, error: any}>((_, reject) => {
+        setTimeout(() => {
+          console.log('AuthContext: Timeout na consulta de membro no Supabase');
+          reject(new Error('Timeout na consulta de membro'));
+        }, 3000); // 3 segundos de timeout
+      });
+      
+      // Verificar se o usuário já tem um registro na tabela members com timeout
+      let existingMember = null;
+      let memberError = null;
+      
+      try {
+        console.log('AuthContext: Iniciando consulta ao Supabase');
+        
+        // Criar a promessa da consulta
+        const queryPromise = supabase
+          .from('members')
+          .select('*')
+          .eq('user_id', user.id)
+          .single();
+        
+        // Executar a consulta com timeout
+        const result = await Promise.race([queryPromise, timeoutPromise]);
+        existingMember = result.data;
+        memberError = result.error;
+        
+        console.log('AuthContext: Consulta ao Supabase concluída');
+      } catch (queryError) {
+        console.error('AuthContext: Erro ou timeout na consulta ao Supabase:', queryError);
+        
+        // Em caso de timeout, tentar uma abordagem alternativa via API
+        try {
+          console.log('AuthContext: Tentando verificar membro via API');
+          const response = await fetch(`/api/members/check?userId=${user.id}`, {
+            headers: {
+              'Cache-Control': 'no-cache',
+              'Pragma': 'no-cache'
+            }
+          });
+          
+          if (response.ok) {
+            const data = await response.json();
+            if (data.exists) {
+              console.log('AuthContext: Membro encontrado via API');
+              existingMember = data.member;
+            }
+          }
+        } catch (apiError) {
+          console.error('AuthContext: Erro ao verificar membro via API:', apiError);
+        }
+      }
+      
       if (memberError && memberError.code !== 'PGRST116') {
         console.error('AuthContext: Erro ao verificar membro existente:', memberError);
         return null;
@@ -246,53 +291,57 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const signOut = async () => {
     console.log('AuthContext: Iniciando processo de logout...');
     
+    // Limpar o estado imediatamente para feedback visual ao usuário
+    setUser(null);
+    
     // Adicionar um timeout para garantir que o processo não fique travado
     const timeoutPromise = new Promise<void>((_, reject) => {
       setTimeout(() => {
+        console.log('AuthContext: Timeout durante logout, forçando limpeza');
         reject(new Error('Timeout ao fazer logout'));
-      }, 5000); // 5 segundos de timeout
+      }, 3000); // 3 segundos de timeout
     });
     
     try {
       // Tentar fazer logout normalmente
+      console.log('AuthContext: Enviando requisição de logout para o Supabase');
       const logoutPromise = supabase.auth.signOut();
       
       // Usar Promise.race para aplicar o timeout
       await Promise.race([logoutPromise, timeoutPromise]);
       
-      console.log('AuthContext: Logout realizado com sucesso');
+      console.log('AuthContext: Logout realizado com sucesso no Supabase');
+    } catch (error) {
+      console.error('AuthContext: Erro ou timeout durante logout:', error);
+    } finally {
+      // Sempre executar a limpeza local, independente do resultado da chamada ao Supabase
+      console.log('AuthContext: Executando limpeza local de dados de autenticação');
       
       // Limpar cookies manualmente para garantir
       if (typeof document !== 'undefined') {
-        document.cookie = 'supabase-auth-token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
-        document.cookie = 'sb-refresh-token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
-        document.cookie = 'sb-access-token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
-        localStorage.removeItem('supabase.auth.token');
+        try {
+          // Usar a função auxiliar para limpar todos os dados
+          const { clearAuthData } = await import('@/lib/auth');
+          clearAuthData();
+        } catch (cleanupError) {
+          console.error('AuthContext: Erro ao limpar dados de autenticação:', cleanupError);
+          
+          // Fallback: tentar limpar manualmente
+          document.cookie = 'supabase-auth-token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
+          document.cookie = 'sb-refresh-token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
+          document.cookie = 'sb-access-token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
+          localStorage.removeItem('supabase.auth.token');
+        }
       }
       
       // Redirecionar para a página de login
-      router.push('/login?signout=true');
+      console.log('AuthContext: Redirecionando para página de login');
       
-      // Forçar um reload da página após um pequeno delay
-      setTimeout(() => {
-        if (typeof window !== 'undefined') {
-          window.location.href = '/login?signout=true';
-        }
-      }, 500);
-    } catch (error) {
-      console.error('AuthContext: Erro durante logout:', error);
-      
-      // Mesmo com erro, limpar cookies e localStorage
-      if (typeof document !== 'undefined') {
-        document.cookie = 'supabase-auth-token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
-        document.cookie = 'sb-refresh-token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
-        document.cookie = 'sb-access-token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
-        localStorage.removeItem('supabase.auth.token');
-      }
-      
-      // Forçar redirecionamento mesmo em caso de erro
+      // Usar window.location para garantir um redirecionamento completo
       if (typeof window !== 'undefined') {
-        window.location.href = '/login?error=Erro+ao+fazer+logout';
+        window.location.href = '/login?signout=true';
+      } else {
+        router.push('/login?signout=true');
       }
     }
   };
