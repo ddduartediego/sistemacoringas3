@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
-import { createRouteHandlerSupabase } from '@/lib/supabase-route-handler';
 import { SupabaseClient } from '@supabase/supabase-js';
+import { createClient } from '@/utils/supabase/server';
 
 // Configuração para que a rota seja dinâmica
 export const dynamic = 'force-dynamic';
@@ -24,7 +24,7 @@ export async function GET() {
       });
       
       // Usar Promise.race para aplicar timeout
-      supabase = await Promise.race([createRouteHandlerSupabase(), timeoutPromise]);
+      supabase = await Promise.race([createClient(), timeoutPromise]);
     } catch (error) {
       console.error('API: Timeout ao criar cliente Supabase:', error);
       return NextResponse.json({

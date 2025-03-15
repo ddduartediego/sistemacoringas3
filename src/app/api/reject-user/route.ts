@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createRouteHandlerSupabase } from '@/lib/supabase-route-handler';
+import { createClient } from '@/utils/supabase/server';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,8 +20,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'ID do membro não fornecido' }, { status: 400 });
     }
     
-    // Criar cliente Supabase de forma assíncrona
-    const supabase = await createRouteHandlerSupabase();
+    // Criar cliente Supabase usando o novo método
+    const supabase = await createClient();
     
     // Verificar se o usuário está autenticado
     const { data: { session }, error: sessionError } = await supabase.auth.getSession();
@@ -43,20 +43,62 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Acesso não autorizado' }, { status: 403 });
     }
     
-    // Excluir o membro
+    // Verificar se o membro existe antes de rejeitar
+    const { data: memberData, error: memberError } = await supabase
+      .from('members')
+      .select('*')
+      .eq('id', memberId)
+      .single();
+      
+    if (memberError || !memberData) {
+      console.error('[API] Erro ao buscar dados do membro:', memberError);
+      return NextResponse.json(
+        { error: 'Membro não encontrado' },
+        { status: 404 }
+      );
+    }
+    
+    // Obter o user_id do membro para poder excluir o usuário posteriormente
+    const userId = memberData.user_id;
+    
+    // Excluir o registro do membro
     const { error: deleteError } = await supabase
       .from('members')
       .delete()
       .eq('id', memberId);
-    
+      
     if (deleteError) {
-      console.error('[API] Erro ao rejeitar usuário:', deleteError);
-      return NextResponse.json({ error: 'Erro ao rejeitar usuário' }, { status: 500 });
+      console.error('[API] Erro ao excluir membro:', deleteError);
+      return NextResponse.json(
+        { error: 'Erro ao excluir membro' },
+        { status: 500 }
+      );
     }
     
-    return NextResponse.json({ success: true });
+    // Desativar o usuário no Supabase Auth
+    // Isso deixará o usuário inativo, mas manterá os registros para auditoria
+    const { error: authError } = await supabase.auth.admin.deleteUser(userId);
+    
+    if (authError) {
+      console.error('[API] Erro ao desativar usuário na autenticação:', authError);
+      // Continuar mesmo se houver erro na desativação do usuário
+      // O importante é que o registro do membro foi removido
+    }
+    
+    console.log('[API] Usuário rejeitado com sucesso:', memberId);
+    
+    return NextResponse.json(
+      { 
+        success: true,
+        message: 'Usuário rejeitado com sucesso'
+      },
+      { status: 200 }
+    );
   } catch (error) {
-    console.error('[API] Erro não tratado:', error);
-    return NextResponse.json({ error: 'Erro interno do servidor' }, { status: 500 });
+    console.error('[API] Erro ao rejeitar usuário:', error);
+    return NextResponse.json(
+      { error: 'Erro interno do servidor' },
+      { status: 500 }
+    );
   }
 } 

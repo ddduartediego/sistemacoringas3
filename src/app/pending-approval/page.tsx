@@ -1,18 +1,64 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { FaCheckCircle, FaUserClock, FaSignOutAlt } from 'react-icons/fa';
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
+import { createClient } from '@/utils/supabase/client';
 import { useRouter } from 'next/navigation';
 
 export default function PendingApproval() {
-  const { user } = useAuth();
+  const { user, isLoading } = useAuth();
   const router = useRouter();
-  
+  const [isChecking, setIsChecking] = useState(true);
+  const [status, setStatus] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const checkMemberStatus = async () => {
+      if (isLoading || !user) return;
+
+      try {
+        setIsChecking(true);
+        const supabase = createClient();
+        
+        // Verificar o status do membro
+        const { data: memberData, error: memberError } = await supabase
+          .from('members')
+          .select('type')
+          .eq('user_id', user.id)
+          .single();
+          
+        if (memberError) {
+          console.error('Erro ao verificar status do membro:', memberError);
+          setError('Não foi possível verificar seu status. Tente novamente mais tarde.');
+          return;
+        }
+        
+        // Verificar se o membro já foi aprovado
+        if (memberData?.type === 'admin' || memberData?.type === 'member') {
+          console.log('Usuário já aprovado, redirecionando...');
+          // Redirecionar para a página apropriada
+          const redirectTo = memberData.type === 'admin' ? '/dashboard' : '/profile';
+          router.push(redirectTo);
+          return;
+        }
+        
+        // Se o tipo é 'pendente', mostrar a mensagem de espera
+        setStatus(memberData?.type || 'pendente');
+      } catch (err: any) {
+        console.error('Erro ao verificar status:', err);
+        setError('Ocorreu um erro ao verificar seu status: ' + (err.message || 'Erro desconhecido'));
+      } finally {
+        setIsChecking(false);
+      }
+    };
+
+    checkMemberStatus();
+  }, [user, isLoading, router]);
+
   const handleSignOut = async () => {
     try {
-      const supabase = createClientComponentClient();
+      const supabase = createClient();
       await supabase.auth.signOut();
       router.push('/');
     } catch (error) {

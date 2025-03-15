@@ -3,9 +3,9 @@
 import React, { useState, useEffect } from 'react';
 import { FaSignOutAlt, FaBell, FaUser, FaUserCheck } from 'react-icons/fa';
 import { useAuth } from '@/context/AuthContext';
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import Link from 'next/link';
 import { motion, AnimatePresence } from 'framer-motion';
+import { createClient } from '@/utils/supabase/client';
 
 export default function Header() {
   const { user, signOut, isLoading } = useAuth();
@@ -15,8 +15,6 @@ export default function Header() {
   const [showNotifications, setShowNotifications] = useState(false);
   const [isLoadingNotifications, setIsLoadingNotifications] = useState(false);
 
-  const supabase = createClientComponentClient();
-
   useEffect(() => {
     // Verificar se o usuário é admin e carregar contagem de usuários pendentes apenas uma vez
     async function checkAdminAndLoadPendingUsers() {
@@ -24,6 +22,7 @@ export default function Header() {
       
       try {
         // Verificar se o usuário é admin
+        const supabase = createClient();
         const { data, error } = await supabase
           .from('members')
           .select('type')
@@ -57,6 +56,7 @@ export default function Header() {
     
     try {
       // Consultar diretamente o Supabase em vez de usar a API
+      const supabase = createClient();
       const { count, error } = await supabase
         .from('members')
         .select('*', { count: 'exact', head: true })
@@ -81,7 +81,9 @@ export default function Header() {
   const handleSignOut = async () => {
     try {
       setIsLoggingOut(true);
-      await signOut();
+      const supabase = createClient();
+      await supabase.auth.signOut();
+      window.location.href = '/login';
     } catch (error) {
       console.error('Erro ao fazer logout:', error);
     } finally {

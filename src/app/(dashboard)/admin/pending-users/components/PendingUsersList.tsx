@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
+import { useState } from 'react';
+import { createClient } from '@/utils/supabase/client';
 import { FaCheck, FaTimes, FaUserCircle } from 'react-icons/fa';
 import { toast } from 'react-hot-toast';
 import LoadingScreen from './LoadingScreen';
@@ -10,16 +10,16 @@ import LoadingScreen from './LoadingScreen';
 interface PendingUser {
   id: string;
   user_id: string;
-  nickname?: string;
   email?: string;
+  nickname?: string;
+  type: string;
   created_at: string;
-  updated_at?: string;
-  type?: string;
   user_metadata?: {
     full_name?: string;
     name?: string;
     avatar_url?: string;
   };
+  [key: string]: any;
 }
 
 // Interface para erros
@@ -28,205 +28,112 @@ interface ApiError {
   status?: number;
 }
 
-export default function PendingUsersList() {
-  const [pendingUsers, setPendingUsers] = useState<PendingUser[]>([]);
-  const [loading, setLoading] = useState(true);
+// Props para o componente
+interface PendingUsersListProps {
+  users: PendingUser[];
+  onStatusChange: () => void;
+}
+
+export default function PendingUsersList({ users, onStatusChange }: PendingUsersListProps) {
+  const [pendingUsers, setPendingUsers] = useState<PendingUser[]>(users);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [processingUser, setProcessingUser] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [avatarErrors, setAvatarErrors] = useState<Record<string, boolean>>({});
   
-  const supabase = createClientComponentClient();
-  
-  // Carregar usuários pendentes diretamente do Supabase
-  useEffect(() => {
-    async function loadPendingUsers() {
-      try {
-        setLoading(true);
-        setError(null);
-        
-        // Verificar o caso do status 'pending'
-        const { data: allTypes, error: typesError } = await supabase
-          .from('members')
-          .select('type')
-          .order('type');
-        
-        if (typesError) {
-          throw new Error(`Erro ao buscar tipos: ${typesError.message}`);
-        }
-        
-        // Buscar usuários pendentes com status "inativo" (e variações)
-        const { data: pendingMembers, error: membersError } = await supabase
-          .from('members')
-          .select('*')
-          .or(`type.eq.inativo,type.eq.Inativo,type.eq.INATIVO`)
-          .order('created_at', { ascending: false });
-          
-        if (membersError) {
-          throw new Error(`Erro ao buscar membros: ${membersError.message}`);
-        }
-        
-        // Preparar array de usuários pendentes com seus perfis
-        const usersWithProfiles: PendingUser[] = [];
-        
-        // Para cada membro pendente, buscar informações do usuário
-        if (pendingMembers && pendingMembers.length > 0) {
-          for (const member of pendingMembers) {
-            // Buscar dados do perfil do usuário
-            const { data: profile, error: profileError } = await supabase
-              .from('profiles')
-              .select('email, full_name, name, avatar_url')
-              .eq('id', member.user_id)
-              .single();
-              
-            if (profileError) {
-              console.error(`Erro ao buscar perfil para ${member.user_id}:`, profileError);
-            }
-            
-            usersWithProfiles.push({
-              id: member.id,
-              user_id: member.user_id,
-              nickname: member.nickname,
-              type: member.type,
-              email: profile?.email,
-              created_at: member.created_at,
-              updated_at: member.updated_at,
-              user_metadata: {
-                full_name: profile?.full_name,
-                name: profile?.name,
-                avatar_url: profile?.avatar_url
-              }
-            });
-          }
-        }
-        
-        setPendingUsers(usersWithProfiles);
-      } catch (error: unknown) {
-        const errorMessage = error instanceof Error ? error.message : 'Erro ao carregar usuários pendentes';
-        console.error('Erro ao carregar usuários pendentes:', error);
-        setError(errorMessage);
-      } finally {
-        setLoading(false);
-      }
-    }
-    
-    loadPendingUsers();
-  }, [supabase]);
-  
-  // Aprovar usuário
+  // Função para aprovar um usuário
   const approveUser = async (memberId: string) => {
     try {
       setProcessingUser(memberId);
       setError(null);
       
-      // Verificar os tipos existentes para determinar o padrão usado no sistema
-      const { data: memberTypes, error: typesError } = await supabase
-        .from('members')
-        .select('type')
-        .or('type.eq.member,type.eq.Member,type.eq.membro,type.eq.Membro')
-        .limit(5);
+      // Usar novo cliente do Supabase
+      const supabase = createClient();
       
-      if (typesError) {
-        console.error('Erro ao verificar tipos existentes:', typesError);
-      }
-      
-      // Determinar o tipo correto para aprovação
-      // Prioridade: usar o que já existe no sistema
-      let memberType = 'member'; // valor padrão
-      
-      if (memberTypes && memberTypes.length > 0) {
-        // Encontrar qual tipo é usado no sistema
-        const typeMap: Record<string, number> = {};
-        memberTypes.forEach(t => {
-          const type = t.type.toLowerCase();
-          typeMap[type] = (typeMap[type] || 0) + 1;
-        });
-        
-        // Verificar se "membro" é mais usado que "member"
-        if ((typeMap['membro'] || 0) > (typeMap['member'] || 0)) {
-          memberType = memberTypes.find(t => t.type.toLowerCase() === 'membro')?.type || 'membro';
-        } else {
-          memberType = memberTypes.find(t => t.type.toLowerCase() === 'member')?.type || 'member';
-        }
-      }
-      
-      console.log(`Aprovando usuário como: ${memberType}`);
-      
-      // Atualizar diretamente no Supabase
+      // Atualizar o membro para 'member'
       const { error } = await supabase
         .from('members')
-        .update({ type: memberType })
+        .update({ type: 'member' })
         .eq('id', memberId);
-
+        
       if (error) {
         throw new Error(error.message || 'Erro ao aprovar usuário');
       }
-
-      // Remove o usuário da lista
-      setPendingUsers(pendingUsers.filter(user => user.id !== memberId));
       
-      // Exibe mensagem de sucesso
+      // Remover o usuário da lista
+      setPendingUsers(prev => prev.filter(user => user.id !== memberId));
+      
+      // Mostrar mensagem de sucesso
       setSuccessMessage('Usuário aprovado com sucesso!');
       toast.success('Usuário aprovado com sucesso!');
       
-      // Limpa a mensagem após alguns segundos
+      // Notificar o componente pai
+      onStatusChange();
+      
+      // Limpar a mensagem após 3 segundos
       setTimeout(() => {
         setSuccessMessage(null);
       }, 3000);
-    } catch (error: unknown) {
+    } catch (error: any) {
       console.error('Erro ao aprovar usuário:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Ocorreu um erro ao aprovar o usuário';
-      setError(errorMessage);
-      toast.error(`Erro ao aprovar usuário: ${errorMessage}`);
+      setError(error.message || 'Erro ao aprovar usuário');
+      toast.error('Erro ao aprovar usuário: ' + error.message);
     } finally {
       setProcessingUser(null);
     }
   };
 
-  // Rejeitar usuário
+  // Função para rejeitar um usuário
   const rejectUser = async (memberId: string) => {
     try {
-      setProcessingUser(memberId);
-      setError(null);
-      
-      // Confirmação de rejeição
+      // Confirmar com o usuário
       if (!confirm('Tem certeza que deseja rejeitar este usuário? Esta ação não pode ser desfeita.')) {
-        setProcessingUser(null);
         return;
       }
       
-      // Excluir diretamente no Supabase
-      const { error } = await supabase
-        .from('members')
-        .delete()
-        .eq('id', memberId);
-
-      if (error) {
-        throw new Error(error.message || 'Erro ao rejeitar usuário');
-      }
-
-      // Remove o usuário da lista
-      setPendingUsers(pendingUsers.filter(user => user.id !== memberId));
+      setProcessingUser(memberId);
+      setError(null);
       
-      // Exibe mensagem de sucesso
+      // Chamar a API para rejeitar o usuário
+      const response = await fetch('/api/reject-user', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ memberId }),
+      });
+      
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.error || 'Erro ao rejeitar usuário');
+      }
+      
+      // Remover o usuário da lista
+      setPendingUsers(prev => prev.filter(user => user.id !== memberId));
+      
+      // Mostrar mensagem de sucesso
       setSuccessMessage('Usuário rejeitado com sucesso!');
       toast.success('Usuário rejeitado com sucesso!');
       
-      // Limpa a mensagem após alguns segundos
+      // Notificar o componente pai
+      onStatusChange();
+      
+      // Limpar a mensagem após 3 segundos
       setTimeout(() => {
         setSuccessMessage(null);
       }, 3000);
-    } catch (error: unknown) {
+    } catch (error: any) {
       console.error('Erro ao rejeitar usuário:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Ocorreu um erro ao rejeitar o usuário';
-      setError(errorMessage);
-      toast.error(`Erro ao rejeitar usuário: ${errorMessage}`);
+      setError(error.message || 'Erro ao rejeitar usuário');
+      toast.error('Erro ao rejeitar usuário: ' + error.message);
     } finally {
       setProcessingUser(null);
     }
   };
 
-  // Formata a data para exibição amigável
+  // Formata a data para exibição
   const formatDate = (dateString: string): string => {
     try {
       const date = new Date(dateString);
@@ -237,20 +144,18 @@ export default function PendingUsersList() {
         hour: '2-digit',
         minute: '2-digit'
       });
-    } catch (_) {
+    } catch (e) {
       return 'Data inválida';
     }
   };
 
-  // Exibe nome ou email caso não haja nome disponível
+  // Obtém o nome de exibição do usuário
   const getUserDisplayName = (user: PendingUser): string => {
-    // Tenta obter o nome das várias fontes possíveis em ordem de prioridade
-    const fullName = user.user_metadata?.full_name;
-    const name = user.user_metadata?.name;
-    const nickname = user.nickname;
-    
-    // Retorna o primeiro valor não vazio
-    return fullName || name || nickname || user.email || 'Usuário sem nome';
+    return user.user_metadata?.full_name || 
+           user.user_metadata?.name || 
+           user.nickname || 
+           user.email || 
+           'Usuário sem nome';
   };
 
   // Renderiza o avatar do usuário
@@ -295,7 +200,7 @@ export default function PendingUsersList() {
 
   return (
     <div className="p-4 md:p-6 max-w-7xl mx-auto">
-      <h1 className="text-2xl md:text-3xl font-bold mb-6">Usuários Pendentes de Aprovação</h1>
+      <h1 className="text-2xl md:text-3xl font-bold mb-6">Aprovação de Novos Usuários</h1>
       
       {/* Mensagem de sucesso */}
       {successMessage && (
@@ -349,8 +254,7 @@ export default function PendingUsersList() {
                             {getUserDisplayName(user)}
                           </div>
                           <div className="text-sm text-gray-500">
-                            {user.nickname || 'Sem apelido'} 
-                            {user.type && <span className="ml-2 px-2 py-1 text-xs bg-gray-100 rounded-full">{user.type}</span>}
+                            {user.nickname || 'Sem apelido'}
                           </div>
                         </div>
                       </div>
@@ -364,7 +268,7 @@ export default function PendingUsersList() {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                       <div className="flex space-x-2 items-center">
-                        <button
+                        <button 
                           className={`px-3 py-1 rounded-md bg-green-600 text-white flex items-center ${
                             processingUser === user.id ? 'opacity-50 cursor-not-allowed' : 'hover:bg-green-700'
                           }`}

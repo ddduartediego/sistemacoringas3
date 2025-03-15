@@ -4,7 +4,7 @@ import React, { useState, useEffect, ChangeEvent } from 'react';
 import { FaUser, FaEdit, FaSave, FaTimes, FaMoneyBillWave, FaHistory, FaIdCard, FaTshirt, FaPhone, FaBirthdayCake, FaBriefcase, FaInfoCircle } from 'react-icons/fa';
 import { useAuth } from '@/context/AuthContext';
 import { motion, AnimatePresence } from 'framer-motion';
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
+import { createClient } from '@/utils/supabase/client';
 import { SystemConfig } from '@/types';
 import { getConfigValues } from '@/lib/config';
 
@@ -26,15 +26,17 @@ export default function Profile() {
     birth_date: '',
   });
 
-  const supabase = createClientComponentClient();
-
   // Buscar dados do membro quando o componente montar
   useEffect(() => {
-    async function fetchMemberData() {
-      if (!user) return;
-
+    const fetchMemberData = async () => {
       try {
-        setIsFetching(true);
+        if (!user?.id) return;
+        
+        setIsLoading(true);
+        
+        // Usar novo cliente do Supabase
+        const supabase = createClient();
+        
         const { data: memberData, error } = await supabase
           .from('members')
           .select('*')
@@ -52,11 +54,12 @@ export default function Profile() {
         setError('Ocorreu um erro inesperado. Tente novamente mais tarde.');
       } finally {
         setIsFetching(false);
+        setIsLoading(false);
       }
-    }
+    };
 
     fetchMemberData();
-  }, [user, supabase]);
+  }, [user?.id]);
 
   // Buscar configurações de tamanho de camiseta quando o modal for aberto
   useEffect(() => {
@@ -163,6 +166,7 @@ export default function Profile() {
       console.log('Dados a serem salvos:', dataToSave);
       
       // Primeiro tentamos buscar novamente o registro para garantir que ele existe
+      const supabase = createClient();
       const { data: existingMember, error: fetchError } = await supabase
         .from('members')
         .select('*')

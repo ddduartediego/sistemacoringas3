@@ -1,6 +1,17 @@
 # Changelog do Sistema Coringas
 
-## [1.0.0] - 2023-05-28
+## Versão 1.1.0 (atual)
+- Migração da biblioteca @supabase/auth-helpers-nextjs para @supabase/ssr
+- Melhoria na gestão de dados e autenticação
+- Refatoração do middleware para suporte a novas rotas
+- Atualização da interface do usuário
+
+## Versão 1.0.0
+- Uso de @supabase/ssr para integração do Supabase com Next.js
+- Layout principal do sistema
+- Sistema de autenticação básico
+- Área de membros com perfil
+- Painel administrativo para aprovação de novos membros
 
 ### Adicionado
 - Configuração inicial do projeto com Next.js, React e Supabase

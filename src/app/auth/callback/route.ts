@@ -1,58 +1,62 @@
 import { NextResponse } from 'next/server';
-import { createRouteHandlerSupabase } from '@/lib/supabase-route-handler';
+import { createClient } from '@/utils/supabase/server';
 
 // Esta configuração é necessária para routes handlers em Next.js
 export const dynamic = 'force-dynamic';
 
+/**
+ * Rota de callback para autenticação
+ * Esta rota é chamada após o usuário autenticar com um provedor externo
+ * 
+ * O código na URL é trocado por uma sessão e o usuário é redirecionado
+ */
 export async function GET(request: Request) {
-  try {
-    console.log('Callback: Iniciando processamento da callback de autenticação');
+  const requestUrl = new URL(request.url);
+  const code = requestUrl.searchParams.get('code');
+  
+  if (code) {
+    console.log('Callback: Code recebido, trocando por sessão');
     
-    // Extrair parâmetros da URL
-    const { searchParams, origin } = new URL(request.url);
-    const code = searchParams.get('code');
-    const next = searchParams.get('next') ?? '/dashboard';
-
-    console.log('Callback: Parâmetros recebidos:', { 
-      temCodigo: !!code, 
-      destinoAposLogin: next 
-    });
-
-    if (!code) {
-      console.error('Callback: Nenhum código recebido na callback');
-      return NextResponse.redirect(`${origin}/login?error=auth-callback-missing-code`);
+    // Obter error e next da URL se estiverem presentes
+    const error = requestUrl.searchParams.get('error');
+    const next = requestUrl.searchParams.get('next') || '/dashboard';
+    
+    // Se houver um erro no login, redirecionar para /login com o erro
+    if (error) {
+      console.error('Callback: Erro recebido no callback:', error);
+      // Codificar o erro para passar na URL de forma segura
+      const encodedError = encodeURIComponent(error);
+      // Redirecionar para o login com o erro
+      return NextResponse.redirect(new URL(`/login?error=${encodedError}`, requestUrl.origin));
     }
-
+    
     try {
-      // Criar cliente Supabase de forma assíncrona
-      console.log('Callback: Criando cliente Supabase para processamento de código de autenticação');
-      const supabase = await createRouteHandlerSupabase();
+      // Criar cliente Supabase usando o novo método
+      const supabase = await createClient();
       
-      // Trocar o código por uma sessão
-      console.log('Callback: Trocando código por sessão no Supabase');
-      const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+      // Executar a troca do code por uma sessão
+      const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
       
-      if (error) {
-        console.error('Callback: Erro ao trocar código por sessão:', error.message);
-        return NextResponse.redirect(`${origin}/login?error=auth-callback-exchange-failed&message=${encodeURIComponent(error.message)}`);
+      if (exchangeError) {
+        console.error('Callback: Erro ao trocar code por sessão:', exchangeError);
+        return NextResponse.redirect(
+          new URL(`/login?error=${encodeURIComponent('Falha na autenticação')}`, requestUrl.origin)
+        );
       }
       
-      console.log('Callback: Sessão criada com sucesso:', {
-        temSessao: !!data?.session,
-        expiraEm: data?.session?.expires_at ? new Date(data.session.expires_at * 1000).toISOString() : 'desconhecido'
-      });
+      console.log('Callback: Code trocado por sessão com sucesso, redirecionando para:', next);
       
-      // Redirecionamento bem-sucedido
-      console.log('Callback: Troca de código por sessão bem-sucedida, redirecionando para:', next);
-      
-      // Não é mais necessário adicionar um atraso, pois estamos usando a API corretamente
-      return NextResponse.redirect(`${origin}${next}`);
-    } catch (innerError: any) {
-      console.error('Callback: Erro durante processamento da autenticação:', innerError);
-      return NextResponse.redirect(`${origin}/login?error=auth-processing-error&message=${encodeURIComponent(innerError?.message || 'Erro desconhecido')}`);
+      // Redirecionar para a página especificada ou para o dashboard por padrão
+      return NextResponse.redirect(new URL(next, requestUrl.origin));
+    } catch (error) {
+      console.error('Callback: Erro não tratado no processo de callback:', error);
+      return NextResponse.redirect(
+        new URL(`/login?error=${encodeURIComponent('Erro interno no servidor')}`, requestUrl.origin)
+      );
     }
-  } catch (error: any) {
-    console.error('Callback: Erro não tratado na callback:', error);
-    return NextResponse.redirect(`${origin}/login?error=auth-callback-unknown-error&message=${encodeURIComponent(error?.message || 'Erro desconhecido')}`);
   }
+  
+  // Se não houver code, redirecionar para /login
+  console.error('Callback: Nenhum código recebido no callback');
+  return NextResponse.redirect(new URL('/login?error=no_code', requestUrl.origin));
 } 

@@ -1,12 +1,12 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
+import { FaUserTie, FaUserCog, FaUserAlt, FaSearch, FaFilter, FaUserEdit, FaTimes, FaExclamationCircle, FaUserCircle } from 'react-icons/fa';
 import { useAuth } from '@/context/AuthContext';
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
-import { FaUserEdit, FaTimes, FaExclamationCircle, FaSearch, FaUserCircle } from 'react-icons/fa';
-import { Member, User, UserType, MemberStatus, TeamRole } from '@/types';
 import { useRouter } from 'next/navigation';
 import { getConfigValues } from '@/lib/config';
+import { createClient } from '@/utils/supabase/client';
+import { Member, User, UserType, MemberStatus, TeamRole } from '@/types';
 
 interface MemberWithUser extends Member {
   user?: {
@@ -36,13 +36,104 @@ export default function MembersPage() {
   
   const router = useRouter();
   
-  // Verificar se o usuário é admin
+  // Declarar a função fetchMembers no escopo global do componente
+  const fetchMembers = async () => {
+    setIsLoading(true);
+    setError(null);
+    
+    try {
+      // Usar novo cliente do Supabase
+      const supabase = createClient();
+      
+      // Buscar todos os membros
+      const { data: membersData, error: membersError } = await supabase
+        .from('members')
+        .select('*')
+        .order('nickname', { ascending: true });
+      
+      if (membersError) throw membersError;
+      
+      // Para cada membro, buscar informações do usuário
+      const membersWithUserInfo = await Promise.all(
+        membersData.map(async (member) => {
+          try {
+            // Verificar se o user_id existe
+            if (!member.user_id) {
+              return { ...member, user: { email: 'Sem email', user_metadata: {} } };
+            }
+            
+            // Buscar informações do usuário na tabela de profiles
+            const { data: profileData, error: profileError } = await supabase
+              .from('profiles')
+              .select('*')
+              .eq('id', member.user_id)
+              .single();
+              
+            if (profileError) {
+              console.log(`Erro ao buscar perfil para membro ${member.id}: ${profileError.message}`);
+              
+              return { 
+                ...member, 
+                user: { 
+                  email: 'Usuário não encontrado', 
+                  user_metadata: {
+                    name: 'Não disponível',
+                    full_name: 'Não disponível'
+                  } 
+                } 
+              };
+            }
+            
+            return {
+              ...member,
+              user: {
+                email: profileData.email || 'Email não disponível',
+                user_metadata: {
+                  name: profileData.name || profileData.full_name || 'Não disponível',
+                  full_name: profileData.full_name || profileData.name || 'Não disponível',
+                  avatar_url: profileData.avatar_url || null,
+                  picture: profileData.avatar_url || null
+                }
+              }
+            };
+          } catch (err) {
+            const errorMessage = err instanceof Error ? err.message : 'Erro desconhecido';
+            console.log(`Erro ao processar dados do usuário para membro ${member.id}: ${errorMessage}`);
+            
+            return { 
+              ...member, 
+              user: { 
+                email: 'Erro ao carregar dados', 
+                user_metadata: {
+                  name: 'Erro',
+                  full_name: 'Erro ao carregar'
+                } 
+              } 
+            };
+          }
+        })
+      );
+      
+      setMembers(membersWithUserInfo);
+    } catch (err: any) {
+      console.error('Erro ao buscar membros:', err);
+      setError(`Erro ao buscar membros: ${err.message || 'Erro desconhecido'}`);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   useEffect(() => {
-    const checkAdminRole = async () => {
+    fetchMembers();
+  }, []);
+
+  useEffect(() => {
+    const checkAdminStatus = async () => {
       if (!user) return;
       
       try {
-        const supabase = createClientComponentClient();
+        // Usar novo cliente do Supabase
+        const supabase = createClient();
         const { data, error } = await supabase
           .from('members')
           .select('type')
@@ -73,12 +164,12 @@ export default function MembersPage() {
         setIsLoading(false);
       }
     };
-    
+
     if (user) {
-      checkAdminRole();
+      checkAdminStatus();
     }
   }, [user, router]);
-  
+
   // Buscar opções de configuração
   const fetchConfigOptions = async () => {
     try {
@@ -94,96 +185,6 @@ export default function MembersPage() {
       }
     } catch (err) {
       console.error('Erro ao buscar opções de configuração:', err);
-    }
-  };
-  
-  // Buscar membros e informações dos usuários
-  const fetchMembers = async () => {
-    setIsLoading(true);
-    setError(null);
-    
-    try {
-      const supabase = createClientComponentClient();
-      
-      // Buscar todos os membros
-      const { data: membersData, error: membersError } = await supabase
-        .from('members')
-        .select('*')
-        .order('nickname', { ascending: true });
-      
-      if (membersError) throw membersError;
-      
-      // Para cada membro, buscar informações do usuário
-      const membersWithUserInfo = await Promise.all(
-        membersData.map(async (member) => {
-          try {
-            // Verificar se o user_id existe
-            if (!member.user_id) {
-              return { ...member, user: { email: 'Sem email', user_metadata: {} } };
-            }
-            
-            // Buscar informações do usuário na tabela de profiles
-            const { data: profileData, error: profileError } = await supabase
-              .from('profiles')
-              .select('*')  // Selecionar todos os campos para garantir que temos todas as informações
-              .eq('id', member.user_id)
-              .single();
-              
-            if (profileError) {
-              // Se ocorrer erro, logar apenas para debugging
-              console.log(`Erro ao buscar perfil para membro ${member.id}: ${profileError.message}`);
-              
-              // Retornar o membro com dados de usuário padrão
-              return { 
-                ...member, 
-                user: { 
-                  email: 'Usuário não encontrado', 
-                  user_metadata: {
-                    name: 'Não disponível',
-                    full_name: 'Não disponível'
-                  } 
-                } 
-              };
-            }
-            
-            // Retornar o membro com os dados do perfil, estruturando para manter compatibilidade
-            return {
-              ...member,
-              user: {
-                email: profileData.email || 'Email não disponível',
-                user_metadata: {
-                  name: profileData.name || profileData.full_name || 'Não disponível',
-                  full_name: profileData.full_name || profileData.name || 'Não disponível',
-                  avatar_url: profileData.avatar_url || null,
-                  picture: profileData.avatar_url || null
-                }
-              }
-            };
-          } catch (err) {
-            // Converter o erro para string para evitar problemas de serialização
-            const errorMessage = err instanceof Error ? err.message : 'Erro desconhecido';
-            console.log(`Erro ao processar dados do usuário para membro ${member.id}: ${errorMessage}`);
-            
-            return { 
-              ...member, 
-              user: { 
-                email: 'Erro ao carregar dados', 
-                user_metadata: {
-                  name: 'Erro',
-                  full_name: 'Erro ao carregar'
-                } 
-              } 
-            };
-          }
-        })
-      );
-      
-      setMembers(membersWithUserInfo);
-    } catch (err: any) {
-      console.error('Erro ao buscar membros:', err);
-      setError(`Erro ao buscar membros: ${err.message || 'Erro desconhecido'}`);
-    } finally {
-      setIsLoading(false);
     }
   };
   
@@ -205,7 +206,8 @@ export default function MembersPage() {
     if (!memberId) return;
     
     try {
-      const supabase = createClientComponentClient();
+      // Usar novo cliente do Supabase
+      const supabase = createClient();
       
       const { data, error } = await supabase
         .from('members')

@@ -1,10 +1,10 @@
 'use client';
 
 import { createContext, useContext, useEffect, useState } from 'react';
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
+import { User } from '@supabase/supabase-js';
 import { useRouter } from 'next/navigation';
-import { User } from '@/types';
 import { syncUserProfileAfterLogin } from '@/lib/auth';
+import { createClient } from '@/utils/supabase/client';
 
 interface AuthContextType {
   user: User | null;
@@ -30,9 +30,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
   
-  // Criar o cliente Supabase usando a forma recomendada para componentes
-  // Correção: Usar a forma correta para Next.js 15
-  const supabase = createClientComponentClient();
+  // Usar o novo cliente do Supabase
+  const supabase = createClient();
 
   // Função para verificar a sessão atual
   const getSession = async () => {

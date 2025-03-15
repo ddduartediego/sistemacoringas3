@@ -10,10 +10,9 @@ import {
 } from 'react-icons/fa';
 import { useAuth } from '@/context/AuthContext';
 import Link from 'next/link';
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
+import { createClient } from '@/utils/supabase/client';
 import { Event, Member, Charge } from '@/types';
 import { useRouter } from 'next/navigation';
-import { supabase } from '@/lib/supabase';
 
 // Importações mockadas temporariamente até que os dados reais possam ser carregados
 // Remova essas funções e importe as reais quando o problema de autenticação estiver resolvido
@@ -105,7 +104,7 @@ const convertChargeStatus = (status: string): 'pending' | 'paid' => {
 const getFutureEvents = async () => {
   console.log('Tentando buscar eventos reais...');
   try {
-    const supabase = createClientComponentClient();
+    const supabase = createClient();
     
     // Buscar eventos futuros (data maior ou igual à data atual)
     const { data, error } = await supabase
@@ -130,7 +129,7 @@ const getFutureEvents = async () => {
 const getAllMembers = async () => {
   console.log('Tentando buscar membros reais...');
   try {
-    const supabase = createClientComponentClient();
+    const supabase = createClient();
     
     const { data, error } = await supabase
       .from('members')
@@ -152,7 +151,7 @@ const getAllMembers = async () => {
 const getPendingChargesByMemberId = async (memberId: string) => {
   console.log('Tentando buscar cobranças reais para o membro:', memberId);
   try {
-    const supabase = createClientComponentClient();
+    const supabase = createClient();
     
     const { data, error } = await supabase
       .from('charges')
@@ -190,7 +189,7 @@ const getPendingChargesByMemberId = async (memberId: string) => {
 const getMemberByUserId = async (userId: string) => {
   console.log('Tentando buscar membro por user_id:', userId);
   try {
-    const supabase = createClientComponentClient();
+    const supabase = createClient();
     
     const { data, error } = await supabase
       .from('members')
@@ -320,6 +319,9 @@ export default function Dashboard() {
     const checkSession = async () => {
       try {
         console.log('Dashboard: Verificação independente de sessão iniciada');
+        
+        // Criar cliente Supabase usando a nova abordagem
+        const supabase = createClient();
         
         // Verificar a sessão utilizando a biblioteca do Supabase
         const { data, error } = await supabase.auth.getSession();

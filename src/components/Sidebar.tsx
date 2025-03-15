@@ -18,7 +18,15 @@ import {
   FaListAlt
 } from 'react-icons/fa';
 import { useAuth } from '@/context/AuthContext';
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
+import { createClient } from '@/utils/supabase/client';
+
+// Definindo a interface para as props do componente
+interface SidebarProps {
+  userData?: {
+    role?: string;
+    type?: string;
+  };
+}
 
 // Definindo interface para os itens de navegação
 interface NavItem {
@@ -28,7 +36,7 @@ interface NavItem {
   badge?: number | null;
 }
 
-export default function Sidebar() {
+export default function Sidebar({ userData }: SidebarProps) {
   const pathname = usePathname();
   const { user, signOut } = useAuth();
   const [isCollapsed, setIsCollapsed] = useState(false);
@@ -36,14 +44,24 @@ export default function Sidebar() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [isMember, setIsMember] = useState(false);
   const [pendingUsersCount, setPendingUsersCount] = useState(0);
+  const [userDataChecked, setUserDataChecked] = useState(false);
 
-  // Verificar se o usuário é admin ou member
+  // Verificar se o usuário é admin
   useEffect(() => {
-    const checkUserStatus = async () => {
-      if (!user?.id) return;
-      
+    const checkUserType = async () => {
       try {
-        const supabase = createClientComponentClient();
+        // Verificar também pelo contexto passado
+        if (userData?.role && userDataChecked === false) {
+          setIsAdmin(userData.role.toLowerCase() === 'admin');
+          setUserDataChecked(true);
+          return;
+        }
+        
+        // Usar novo cliente do Supabase
+        const supabase = createClient();
+        
+        if (!user?.id) return;
+        
         const { data, error } = await supabase
           .from('members')
           .select('type')
@@ -56,46 +74,53 @@ export default function Sidebar() {
         }
         
         // Função auxiliar para verificar o tipo de forma case-insensitive
-        const checkType = (actual: string, expected: string) => 
-          actual?.toLowerCase() === expected.toLowerCase();
+        const checkType = (type: string | undefined | null, value: string): boolean => {
+          if (!type) return false;
+          return type.toLowerCase() === value.toLowerCase();
+        };
         
         // Verificar o tipo do usuário (agora case-insensitive)
-        setIsAdmin(checkType(data?.type, 'admin'));
+        const isUserAdmin = checkType(data?.type, 'admin');
+        setIsAdmin(isUserAdmin);
         setIsMember(checkType(data?.type, 'member'));
         
-        // Se for admin, buscar quantidade de usuários pendentes
-        if (checkType(data?.type, 'admin')) {
-          fetchPendingUsersCount();
-        }
-      } catch (err) {
-        console.error('Erro ao verificar permissões:', err);
+        // Se for admin, a contagem será buscada no useEffect separado
+      } catch (error) {
+        console.error('Erro ao verificar permissões:', error);
       }
     };
     
-    checkUserStatus();
-  }, [user]);
+    checkUserType();
+  }, [userData, userDataChecked, user]);
   
-  // Buscar contagem de usuários pendentes diretamente do Supabase
-  const fetchPendingUsersCount = async () => {
-    try {
-      const supabase = createClientComponentClient();
-      
-      // Consultar diretamente o Supabase em vez de usar a API
-      const { count, error } = await supabase
-        .from('members')
-        .select('*', { count: 'exact', head: true })
-        .eq('type', 'pending');
-      
-      if (error) {
-        throw error;
+  // Obter contagem de membros pendentes se for admin
+  useEffect(() => {
+    if (!isAdmin) return;
+    
+    const fetchPendingCount = async () => {
+      try {
+        // Usar novo cliente do Supabase
+        const supabase = createClient();
+        
+        // Consultar diretamente o Supabase em vez de usar a API
+        const { count, error } = await supabase
+          .from('members')
+          .select('*', { count: 'exact', head: true })
+          .eq('type', 'pending');
+        
+        if (error) {
+          throw error;
+        }
+        
+        setPendingUsersCount(count || 0);
+      } catch (error) {
+        console.error('Erro ao buscar contagem de usuários pendentes:', error);
+        setPendingUsersCount(0);
       }
-      
-      setPendingUsersCount(count || 0);
-    } catch (err) {
-      console.error('Erro ao buscar contagem de usuários pendentes:', err);
-      setPendingUsersCount(0);
-    }
-  };
+    };
+    
+    fetchPendingCount();
+  }, [isAdmin]);
 
   const toggleSidebar = () => {
     setIsCollapsed(!isCollapsed);

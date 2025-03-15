@@ -1,6 +1,6 @@
 import { supabase } from './supabase';
 import { User } from '@/types';
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
+import { createClient } from '@/utils/supabase/client';
 
 // Função para realizar o login com Google
 export const signInWithGoogle = async () => {
@@ -112,16 +112,21 @@ export const createOrUpdateUserProfile = async (user: any) => {
 };
 
 /**
- * Sincroniza o perfil do usuário após o login
- * Verifica se o usuário já tem um registro na tabela members
- * Se não tiver, cria um novo registro
+ * Função para criar ou atualizar o membro correspondente ao usuário
+ * após o login bem-sucedido
  */
-export const syncUserProfileAfterLogin = async (userId: string, userEmail: string, userName: string) => {
+export async function syncUserProfileAfterLogin(
+  userId: string,
+  userEmail: string,
+  displayName: string
+) {
   try {
-    console.log('Sincronizando perfil do usuário após login:', userId);
-    const supabase = createClientComponentClient();
+    console.log('Auth: Sincronizando perfil do usuário após login:', { userId, userEmail });
     
-    // Verificar se o usuário já tem um registro na tabela members
+    // Usar novo cliente do Supabase
+    const supabase = createClient();
+    
+    // Verificar se o membro já existe
     const { data: existingMember, error: memberError } = await supabase
       .from('members')
       .select('*')
@@ -143,7 +148,7 @@ export const syncUserProfileAfterLogin = async (userId: string, userEmail: strin
     console.log('Criando novo registro de membro para o usuário:', userId);
     
     // Extrair o nome do usuário do email ou dos metadados
-    const nickname = userName || userEmail.split('@')[0];
+    const nickname = displayName || userEmail.split('@')[0];
     
     const { data: newMember, error: insertError } = await supabase
       .from('members')
@@ -173,67 +178,7 @@ export const syncUserProfileAfterLogin = async (userId: string, userEmail: strin
     console.error('Erro ao sincronizar perfil do usuário:', error);
     throw error;
   }
-};
-
-/**
- * Limpa todos os dados de autenticação do navegador
- * Útil para resolver problemas de autenticação
- */
-export const clearAuthData = () => {
-  console.log('Limpando dados de autenticação...');
-  
-  try {
-    // Limpar cookies relacionados ao Supabase
-    const cookiesToClear = [
-      'supabase-auth-token',
-      'sb-refresh-token',
-      'sb-access-token',
-      'sb-auth-token',
-      '__supabase_auth_token',
-      '__supabase_refresh_token'
-    ];
-    
-    cookiesToClear.forEach(cookieName => {
-      // Limpar para diferentes paths
-      document.cookie = `${cookieName}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;`;
-      document.cookie = `${cookieName}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/login;`;
-      document.cookie = `${cookieName}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/dashboard;`;
-      document.cookie = `${cookieName}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/auth;`;
-    });
-    
-    // Limpar localStorage
-    const keysToRemove = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key && (key.includes('supabase') || key.includes('sb-'))) {
-        keysToRemove.push(key);
-      }
-    }
-    
-    keysToRemove.forEach(key => {
-      localStorage.removeItem(key);
-    });
-    
-    // Limpar sessionStorage
-    const sessionKeysToRemove = [];
-    for (let i = 0; i < sessionStorage.length; i++) {
-      const key = sessionStorage.key(i);
-      if (key && (key.includes('supabase') || key.includes('sb-'))) {
-        sessionKeysToRemove.push(key);
-      }
-    }
-    
-    sessionKeysToRemove.forEach(key => {
-      sessionStorage.removeItem(key);
-    });
-    
-    console.log('Dados de autenticação limpos com sucesso');
-    return true;
-  } catch (error) {
-    console.error('Erro ao limpar dados de autenticação:', error);
-    return false;
-  }
-};
+}
 
 /**
  * Verifica a sessão atual do usuário
@@ -242,7 +187,8 @@ export const clearAuthData = () => {
 export async function checkSession() {
   try {
     console.log('Auth: Verificando sessão');
-    const supabase = createClientComponentClient();
+    // Usar novo cliente do Supabase
+    const supabase = createClient();
     
     const { data, error } = await supabase.auth.getSession();
     
@@ -274,7 +220,7 @@ export async function isAuthenticated() {
 export async function getMemberType(userId: string) {
   try {
     console.log('Auth: Verificando tipo de membro:', userId);
-    const supabase = createClientComponentClient();
+    const supabase = createClient();
     
     const { data, error } = await supabase
       .from('members')

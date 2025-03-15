@@ -1,6 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import { Member } from '@/types';
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
+import { createClient } from '@/utils/supabase/client';
 import { syncUserProfileAfterLogin } from './auth';
 
 /**
@@ -84,7 +84,7 @@ export const updateOwnMemberInfo = async (
   memberData: Partial<Member>
 ) => {
   try {
-    const supabase = createClientComponentClient();
+    const supabase = createClient();
     
     // Verificar se o membro pertence ao usuário
     const { data: memberCheck, error: checkError } = await supabase
@@ -166,4 +166,33 @@ export const updateMember = async (id: string, updates: Partial<Member>) => {
   }
   
   return data[0] as Member;
+};
+
+/**
+ * Obtém a lista de membros pendentes
+ * (que ainda não foram aprovados ou rejeitados)
+ */
+export const getPendingMembers = async (): Promise<Member[]> => {
+  try {
+    console.log('Buscando membros pendentes...');
+    
+    // Usar novo cliente do Supabase
+    const supabase = createClient();
+    
+    const { data, error } = await supabase
+      .from('members')
+      .select('*')
+      .eq('type', 'pendente')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Erro ao buscar membros pendentes:', error);
+      throw error;
+    }
+
+    return data as Member[] || [];
+  } catch (error) {
+    console.error('Falha ao buscar membros pendentes:', error);
+    return [];
+  }
 }; 

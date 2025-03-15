@@ -1,81 +1,64 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
-import { User } from '@/types';
+import { createClient } from '@/utils/supabase/client';
+import { useRouter } from 'next/navigation';
+import { useAuth } from '@/context/AuthContext';
 
-interface MemberCheckerProps {
-  user: User;
-}
+// MemberChecker verifica se o usuário tem permissão para acessar a página atual
+export default function MemberChecker() {
+  const { user, isLoading } = useAuth();
+  const router = useRouter();
+  const [loading, setLoading] = useState(true);
 
-export default function MemberChecker({ user }: MemberCheckerProps) {
-  const [isChecking, setIsChecking] = useState(true);
-  
   useEffect(() => {
-    const checkAndCreateMember = async () => {
+    const checkMemberStatus = async () => {
       try {
-        if (!user.id) return;
+        if (isLoading) return; // Se ainda está carregando o status de auth, esperar
         
-        const supabase = createClientComponentClient();
+        if (!user) {
+          console.log('MemberChecker: Usuário não autenticado, redirecionando para login');
+          router.push('/login');
+          return;
+        }
         
-        // Verificar se o usuário já possui um registro de membro
-        const { data: existingMember, error: checkError } = await supabase
+        // Usar novo cliente do Supabase
+        const supabase = createClient();
+        
+        // Verificar o tipo do membro no banco de dados
+        const { data, error } = await supabase
           .from('members')
-          .select('id, type')
+          .select('type')
           .eq('user_id', user.id)
           .single();
         
-        // Se já existe um membro, não fazemos nada
-        if (existingMember) {
-          console.log('Usuário já possui registro de membro:', existingMember.type);
+        if (error) {
+          console.error('MemberChecker: Erro ao verificar membro:', error);
+          // Em caso de erro, redirecionar para pending-approval
+          router.push('/pending-approval');
           return;
         }
         
-        // Se não existe (erro PGRST116 - No Results) ou outro erro, verificamos
-        if (checkError && checkError.code !== 'PGRST116') {
-          console.error('Erro ao verificar registro de membro:', checkError);
-          return;
-        }
+        // Verificar o tipo do membro
+        const memberType = data?.type?.toLowerCase() || '';
         
-        // Criar um novo registro de membro do tipo "inativo"
-        console.log('Criando registro de membro inativo para novo usuário');
-        
-        const fullName = user.user_metadata?.full_name || 
-                        user.user_metadata?.name || 
-                        user.email?.split('@')[0] || 
-                        'Novo Membro';
-        
-        const { error: insertError } = await supabase
-          .from('members')
-          .insert([{
-            user_id: user.id,
-            nickname: fullName,
-            status: 'calouro', // Status inicial
-            type: 'Inativo', // Tipo inicial (aguardando aprovação) - com 'I' maiúsculo para consistência
-            team_role: 'rua',
-            financial_status: 'ok',
-            shirt_size: 'M',
-            gender: 'prefiro_nao_responder',
-            pending_amount: 0
-          }]);
-          
-        if (insertError) {
-          console.error('Erro ao criar registro de membro inativo:', insertError);
-        } else {
-          console.log('Registro de membro inativo criado com sucesso');
-          // Recarregar a página para aplicar as restrições de acesso
-          window.location.reload();
+        // Se o membro não estiver aprovado, redirecionar para pending-approval
+        if (memberType !== 'admin' && memberType !== 'member') {
+          console.log('MemberChecker: Usuário não aprovado, redirecionando');
+          router.push('/pending-approval');
         }
       } catch (error) {
-        console.error('Erro ao verificar/criar membro:', error);
+        console.error('MemberChecker: Erro ao verificar status:', error);
+        // Em caso de erro, redirecionar para pending-approval por segurança
+        router.push('/pending-approval');
       } finally {
-        setIsChecking(false);
+        setLoading(false);
       }
     };
-    
-    checkAndCreateMember();
-  }, [user]);
-  
-  // Este componente não renderiza nada visível
+
+    checkMemberStatus();
+  }, [user, isLoading, router]);
+
+  // O componente não renderiza nada, apenas faz a verificação
   return null;
 } 
